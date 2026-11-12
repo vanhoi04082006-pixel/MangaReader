@@ -3,12 +3,13 @@
 // Bao mat:
 // - Rate limit theo IP + theo email (chong brute force)
 // - Chi email ADMIN_EMAIL duoc phep (single-admin)
-// - Neu ADMIN_USER_ID cau hinh -> UUID phai khop (chong doi mat admin identity)
+// - ADMIN_USER_ID bat buoc trong production: UUID phai khop voi user Supabase
+//   (fail closed — khong co fallback email-only trong production)
 // - Provider local bi tu choi trong production (fail closed)
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { parseBody, ok, fail, withErrorHandling, assertSameOrigin } from "@/lib/api";
-import { getEnv, isAdminUser } from "@/lib/env";
+import { getEnv, isAdminUser, adminIdentityConfigIssue } from "@/lib/env";
 import {
   sbPasswordGrant,
   sbAdminGetUserByEmail,
@@ -60,6 +61,20 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
       500,
       "config_invalid"
     );
+  }
+
+  // ---- Admin identity pinning: BAT BUOC trong production ----
+  // ADMIN_USER_ID phai ton tai + la UUID hop le truoc khi den gan Supabase.
+  // Thieu/mai -> tu choi som (fail closed), KHONG fallback email-only.
+  if (env.authProvider === "supabase") {
+    const issue = adminIdentityConfigIssue();
+    if (issue && env.isProd) {
+      return fail(
+        "Cấu hình thiếu ADMIN_USER_ID (bắt buộc trong production). Chạy scripts/bootstrap-admin.ts để lấy UUID.",
+        500,
+        "config_invalid"
+      );
+    }
   }
 
   if (env.authProvider === "local") {

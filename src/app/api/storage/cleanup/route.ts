@@ -7,7 +7,7 @@
 // -> giu row de retry (bao gom trong ket qua retryNeeded).
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { ok, parseBody, requireAdminMutation, withErrorHandling, ApiError } from "@/lib/api";
+import { ok, parseBody, requireAdminDestructive, withErrorHandling, ApiError } from "@/lib/api";
 import {
   cleanupPendingObjects,
   cleanupOrphanKeys,
@@ -26,7 +26,8 @@ const cleanupRequestSchema = z.object({
 });
 
 export const POST = withErrorHandling(async (req: NextRequest) => {
-  const user = await requireAdminMutation(req);
+  // Cleanup xoa object R2 (pha hoi) -> xac minh session truc tiep voi Supabase.
+  const user = await requireAdminDestructive(req);
 
   const rl = await hitRateLimit(`cleanup:${user.id}`, RATE_LIMITS.cleanup.limit, RATE_LIMITS.cleanup.windowMs);
   if (!rl.allowed) {

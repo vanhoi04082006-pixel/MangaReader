@@ -56,3 +56,10 @@ Ghi chú: URL web `https://github.com/.../MangeReader` trả 404 cho khách **kh
 - Title trình duyệt: "MangaReader — Thư viện truyện cá nhân" ✅ (kiểm chứng bằng agent-browser).
 - UI hiển thị "MangaReader" ở sidebar/login/settings ✅ (kiểm chứng browser).
 - `git remote -v` → `.../MangaReader.git` ✅; fetch/push hoạt động ✅.
+
+## 4. Rà soát lại lượt 2 (2026-11-12, sau hardening pass 2)
+
+- Branding vẫn là **MangaReader** trên toàn bộ diff lượt 2 (không tái xuất `MangeReader`/`TSUNDOKU` user-facing; các định danh cố ý giữ ở mục 2.2 không đổi).
+- Các file mới của lượt 2 (`scripts/migrate-sqlite-to-postgres.ts`, `scripts/verify-rls.ts` viết lại, report cập nhật) đều dùng tên `MangaReader`.
+- `upload/Pasted Content…txt` (file task tạm chứa văn bản task, có local commit rác trên main cục bộ `48a321d` — **chỉ tồn tại local, chưa bao giờ push**; không nằm trên audit branch) — không ảnh hưởng branding repo.
+- Số liệu diff thực tế từ Git (hiệu chỉnh lượt 2): so với main `18bd3ee` là **69 file, +4798/−588** (lượt 1 ghi 57 file/+1591 là số liệu giữa chừng).

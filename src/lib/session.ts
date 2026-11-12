@@ -11,7 +11,7 @@
 import crypto from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { getEnv } from "@/lib/env";
+import { getEnv, type AuthProvider } from "@/lib/env";
 import { sbGetUser, SupabaseAuthError } from "@/lib/supabase-auth";
 
 export const ACCESS_COOKIE = "tsundoku_at";
@@ -98,26 +98,39 @@ export function invalidateSessionCache(token: string): void {
 
 // ---------------- Session resolution --------------------------
 
-/**
- * Lay user tu request (cookie hoac Authorization: Bearer).
- * Tra ve null neu chua dang nhap. Throw SupabaseAuthError neu Supabase loi mang.
- * LUU Y: provider = null (cau hinh local trong production) -> tra ve null (fail closed).
- */
-export async function getSessionUser(req: NextRequest): Promise<SessionUser | null> {
-  const env = getEnv();
+function extractToken(req: NextRequest, provider: AuthProvider | null): string | null {
   const authHeader = req.headers.get("authorization") ?? "";
   const bearer = authHeader.toLowerCase().startsWith("bearer ")
     ? authHeader.slice(7).trim()
     : null;
+  if (provider === "supabase") {
+    return bearer ?? req.cookies.get(ACCESS_COOKIE)?.value ?? null;
+  }
+  return bearer ?? req.cookies.get(LOCAL_COOKIE)?.value ?? null;
+}
+
+/**
+ * Lay user tu request (cookie hoac Authorization: Bearer).
+ * Tra ve null neu chua dang nhap. Throw SupabaseAuthError neu Supabase loi mang.
+ * LUU Y: provider = null (cau hinh local trong production) -> tra ve null (fail closed).
+ *
+ * Cache 90s de giam so lan goi mang (chiem hanh vi doc thuong). Cac thao tac
+ * PHA HOAI (xoa truyen/chapter/trang, cleanup storage) phai dung bien the
+ * strict (getSessionUserStrict) de kiem tra truc tiep voi Supabase — xem
+ * comment phia duoi ve cua so hieu luc.
+ */
+export async function getSessionUser(req: NextRequest): Promise<SessionUser | null> {
+  const env = getEnv();
 
   if (env.authProvider === null) {
     // Cau hinh khong hop le (vd AUTH_PROVIDER=local trong production) — fail closed.
     return null;
   }
 
+  const token = extractToken(req, env.authProvider);
+  if (!token) return null;
+
   if (env.authProvider === "supabase") {
-    const token = bearer ?? req.cookies.get(ACCESS_COOKIE)?.value ?? null;
-    if (!token) return null;
     const key = cacheKey(token);
     const cached = verifyCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.user;
@@ -132,8 +145,46 @@ export async function getSessionUser(req: NextRequest): Promise<SessionUser | nu
   }
 
   // local mode (chi development)
-  const token = bearer ?? req.cookies.get(LOCAL_COOKIE)?.value ?? null;
-  if (!token || !env.authSecret) return null;
+  if (!env.authSecret) return null;
+  const payload = localJwtVerify(token, env.authSecret);
+  if (!payload) return null;
+  return {
+    id: String(payload.sub ?? "local-admin"),
+    email: String(payload.email ?? ""),
+  };
+}
+
+/**
+ * Xac minh session KHONG qua cache — goi truc tiep Supabase moi lan.
+ *
+ * Dung cho cac thao tac pha hoai (DELETE truyen/chapter/trang, cleanup storage):
+ * - Supabase /auth/v1/user tu choi access token cua session da revoke
+ *   (access token JWT co claim session_id; GoTrue kiem tra against danh sach
+ *   session da revoke) -> xac minh truc tiep = trang thai uy quyen NHANH NHAT.
+ * - Cache 90s chi ton tai tren 1 runtime instance (globalThis) — tren Vercel
+ *   serverless moi instance co cache rieng, logout chi xoa duoc cache cua
+ *   instance xu ly logout. Bien the strict loai bo cua so nay cho thao tac
+ *   khong the hoan tac.
+ *
+ * Compromise con lai (da ghi chan hon tai bao cao): access token JWT con han
+ *   (chua revoke) van hop le den khi het han hoac bi revoke — dieu nay dung
+ *   theo thiet ke cua JWT; ranh gioi that la do Supabase quan ly session.
+ */
+export async function getSessionUserStrict(req: NextRequest): Promise<SessionUser | null> {
+  const env = getEnv();
+
+  if (env.authProvider === null) return null; // fail closed
+
+  const token = extractToken(req, env.authProvider);
+  if (!token) return null;
+
+  if (env.authProvider === "supabase") {
+    const user = await sbGetUser(token); // KHONG doc/ghi cache
+    return user ? { id: user.id, email: user.email ?? "" } : null;
+  }
+
+  // local mode (chi development) — JWT verify local, khong co cache
+  if (!env.authSecret) return null;
   const payload = localJwtVerify(token, env.authSecret);
   if (!payload) return null;
   return {

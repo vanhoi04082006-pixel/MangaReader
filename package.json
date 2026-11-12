@@ -15,6 +15,9 @@
     "db:generate:pg": "prisma generate --schema prisma/schema.postgres.prisma",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
+    "db:migrate:sqlite-to-postgres": "bun run scripts/migrate-sqlite-to-postgres.ts",
+    "bootstrap:admin": "bun run scripts/bootstrap-admin.ts",
+    "verify:rls": "bun run scripts/verify-rls.ts",
     "r2:setup": "bun run scripts/setup-r2.ts",
     "test:manga": "bun run scripts/make-test-manga.ts"
   },

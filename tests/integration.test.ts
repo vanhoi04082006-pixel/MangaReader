@@ -694,8 +694,236 @@ describe("7. Upload proxy (fallback) — gioi han & toan ven", () => {
 });
 
 // =============================================================
-describe("8. Logout & session revocation", () => {
-  test("logout -> 200 + cookie cleared", async () => {
+describe("7b. Proxy cap enforcement — MAX_PROXY_FILE_SIZE trong khi stream", () => {
+  const CAP = 4 * 1024 * 1024; // phai khop MAX_PROXY_FILE_SIZE
+
+  /** Tao manga + chapter moi cho test. */
+  async function makeMangaChapter(title: string): Promise<{ mangaId: string; chapterId: string }> {
+    const manga = await api("POST", "/api/mangas", { cookies: jar, json: { title } });
+    expect(manga.status).toBe(201);
+    const mBody = (await manga.json()) as { id: string };
+    const chapter = await api("POST", `/api/mangas/${mBody.id}/chapters`, {
+      cookies: jar,
+      json: { chapterNumber: "cap-1" },
+    });
+    expect(chapter.status).toBe(201);
+    const cBody = (await chapter.json()) as { id: string };
+    return { mangaId: mBody.id, chapterId: cBody.id };
+  }
+
+  /** Presign 1 page; tra ve objectKey. */
+  async function presignPage(
+    mangaId: string,
+    chapterId: string,
+    fileName: string,
+    fileSize: number
+  ): Promise<string> {
+    const presign = await api("POST", "/api/uploads/presign", {
+      cookies: jar,
+      json: {
+        kind: "PAGE",
+        mangaId,
+        chapterId,
+        fileName,
+        mimeType: "image/jpeg",
+        fileSize,
+        pageNumber: 1,
+      },
+    });
+    expect(presign.status).toBe(200);
+    const pBody = (await presign.json()) as { objectKey: string };
+    return pBody.objectKey;
+  }
+
+  test("1. body DUNG BANG gioi han 4MB -> 200 (khong sai lech mot byte)", async () => {
+    const { mangaId, chapterId } = await makeMangaChapter("[TEST-AUDIT] Proxy cap exact");
+    const key = await presignPage(mangaId, chapterId, "cap.jpg", CAP);
+    const body = Buffer.alloc(CAP, 1); // dung 4194304 byte
+
+    const proxy = await api(
+      "POST",
+      `/api/uploads/direct?key=${encodeURIComponent(key)}&contentType=image%2Fjpeg`,
+      { cookies: jar, body, headers: { "content-type": "image/jpeg" } }
+    );
+    expect(proxy.status).toBe(200);
+    const up = (await proxy.json()) as { sizeBytes?: number };
+    expect(up.sizeBytes).toBe(CAP);
+
+    // Don dep
+    await api("POST", "/api/uploads/abort", { cookies: jar, json: { objectKeys: [key] } });
+    await api("DELETE", `/api/mangas/${mangaId}`, { cookies: jar });
+  });
+
+  test("2. khai bao NHO nhung body thuc te VUOT gioi han -> 413 proxy_too_large + KHONG PUT len R2", async () => {
+    const { mangaId, chapterId } = await makeMangaChapter("[TEST-AUDIT] Proxy cap overflow");
+    // Khai bao 134B (duoi cap) nhung stream 4MB+1 byte -> phai bi chan NGAY tai cap
+    const key = await presignPage(mangaId, chapterId, "overflow.jpg", TINY_JPEG.length);
+    const overflowBody = Buffer.alloc(CAP + 1, 2);
+
+    let status = -1;
+    let code = "";
+    try {
+      const proxy = await api(
+        "POST",
+        `/api/uploads/direct?key=${encodeURIComponent(key)}&contentType=image%2Fjpeg`,
+        { cookies: jar, body: overflowBody, headers: { "content-type": "image/jpeg" } }
+      );
+      status = proxy.status;
+      code = ((await proxy.json()) as { code?: string }).code ?? "";
+    } catch {
+      // Server huy ket noi giua chang khi cancel reader — chap nhan duoc;
+      // bang chung "khong PUT" se duoc xac minh qua finalize o duoi.
+      status = 0;
+    }
+    if (status !== 0) {
+      expect(status).toBe(413);
+      expect(code).toBe("proxy_too_large");
+    }
+
+    // Chung minh KHONG co object tren R2: finalize (HeadObject) phai fail
+    // (khong co PUT mot phan — S3 PUT chi thuc hien sau khi doc het body).
+    const fin = await api("POST", `/api/chapters/${chapterId}/pages`, {
+      cookies: jar,
+      json: {
+        pages: [
+          {
+            objectKey: key,
+            pageNumber: 1,
+            fileName: "overflow.jpg",
+            mimeType: "image/jpeg",
+            fileSize: TINY_JPEG.length,
+          },
+        ],
+      },
+    });
+    expect(fin.status).toBe(400);
+    expect(((await fin.json()) as { code?: string }).code).toBe("r2_verify_failed");
+
+    await api("POST", "/api/uploads/abort", { cookies: jar, json: { objectKeys: [key] } });
+    await api("DELETE", `/api/mangas/${mangaId}`, { cookies: jar });
+  });
+
+  test("3. upload vao key da CONFIRMED (khong con PENDING) -> 409 not_pending", async () => {
+    const { mangaId, chapterId } = await makeMangaChapter("[TEST-AUDIT] Proxy not pending");
+    const key = await presignPage(mangaId, chapterId, "once.jpg", TINY_JPEG.length);
+
+    // Upload lan 1 -> 200
+    const first = await api(
+      "POST",
+      `/api/uploads/direct?key=${encodeURIComponent(key)}&contentType=image%2Fjpeg`,
+      { cookies: jar, body: TINY_JPEG, headers: { "content-type": "image/jpeg" } }
+    );
+    expect(first.status).toBe(200);
+
+    // Finalize -> CONFIRMED
+    const fin = await api("POST", `/api/chapters/${chapterId}/pages`, {
+      cookies: jar,
+      json: {
+        pages: [
+          {
+            objectKey: key,
+            pageNumber: 1,
+            fileName: "once.jpg",
+            mimeType: "image/jpeg",
+            fileSize: TINY_JPEG.length,
+          },
+        ],
+      },
+    });
+    expect(fin.status).toBe(201);
+
+    // Upload lai cung key (da CONFIRMED) -> 409 not_pending (chong thay the object)
+    const second = await api(
+      "POST",
+      `/api/uploads/direct?key=${encodeURIComponent(key)}&contentType=image%2Fjpeg`,
+      { cookies: jar, body: TINY_JPEG, headers: { "content-type": "image/jpeg" } }
+    );
+    expect(second.status).toBe(409);
+    expect(((await second.json()) as { code?: string }).code).toBe("not_pending");
+
+    await api("DELETE", `/api/mangas/${mangaId}`, { cookies: jar });
+  });
+
+  test("4. upload bi gian doan (stream loi giua chang) -> khong tao object tren R2", async () => {
+    const { mangaId, chapterId } = await makeMangaChapter("[TEST-AUDIT] Proxy interrupted");
+    const key = await presignPage(mangaId, chapterId, "broken.jpg", TINY_JPEG.length);
+
+    // Stream phat mot phan roi LOI (gia lap mat ket noi giua chang)
+    const brokenStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(TINY_JPEG.subarray(0, 64)));
+        setTimeout(() => controller.error(new Error("simulated disconnect")), 10);
+      },
+    });
+
+    let interrupted = false;
+    try {
+      const proxy = await api(
+        "POST",
+        `/api/uploads/direct?key=${encodeURIComponent(key)}&contentType=image%2Fjpeg`,
+        { cookies: jar, body: brokenStream, headers: { "content-type": "image/jpeg" } }
+      );
+      // Neu server kip phan hoi truoc khi client dut ket noi -> phai la 400 body_interrupted
+      expect(proxy.status).toBe(400);
+      expect(((await proxy.json()) as { code?: string }).code).toBe("body_interrupted");
+    } catch {
+      interrupted = true; // fetch reject khi stream loi — chap nhan
+    }
+    expect(true).toBe(true);
+
+    // Chung minh KHONG co object tren R2: finalize -> r2_verify_failed
+    const fin = await api("POST", `/api/chapters/${chapterId}/pages`, {
+      cookies: jar,
+      json: {
+        pages: [
+          {
+            objectKey: key,
+            pageNumber: 1,
+            fileName: "broken.jpg",
+            mimeType: "image/jpeg",
+            fileSize: TINY_JPEG.length,
+          },
+        ],
+      },
+    });
+    expect(fin.status).toBe(400);
+    expect(((await fin.json()) as { code?: string }).code).toBe("r2_verify_failed");
+
+    await api("POST", "/api/uploads/abort", { cookies: jar, json: { objectKeys: [key] } });
+    await api("DELETE", `/api/mangas/${mangaId}`, { cookies: jar });
+    expect(typeof interrupted).toBe("boolean");
+  });
+
+  test("5. KHONG co Content-Length header (stream body) + dung kich thuoc -> 200", async () => {
+    const { mangaId, chapterId } = await makeMangaChapter("[TEST-AUDIT] Proxy no content-length");
+    const key = await presignPage(mangaId, chapterId, "stream.jpg", TINY_JPEG.length);
+
+    // ReadableStream -> fetch DUNG chunked encoding, khong co Content-Length.
+    // Route dem byte thuc te (khong phu thuoc header) -> dung khai bao la OK.
+    const streamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(TINY_JPEG));
+        controller.close();
+      },
+    });
+
+    const proxy = await api(
+      "POST",
+      `/api/uploads/direct?key=${encodeURIComponent(key)}&contentType=image%2Fjpeg`,
+      { cookies: jar, body: streamBody, headers: { "content-type": "image/jpeg" } }
+    );
+    expect(proxy.status).toBe(200);
+    const up = (await proxy.json()) as { sizeBytes?: number };
+    expect(up.sizeBytes).toBe(TINY_JPEG.length);
+
+    await api("POST", "/api/uploads/abort", { cookies: jar, json: { objectKeys: [key] } });
+    await api("DELETE", `/api/mangas/${mangaId}`, { cookies: jar });
+  });
+});
+
+// =============================================================
+describe("8. Logout & session revocation (day du cac truong hop)", () => {
+  test("8.1 logout access con han + refresh -> 200 + cookie cleared + token cu bi Supabase tu choi", async () => {
     // Lay access token hien tai tu jar de kiem tra revoke sau nay
     const accessToken = jar.jar.get("tsundoku_at") ?? "";
     expect(accessToken.length).toBeGreaterThan(20);
@@ -712,6 +940,90 @@ describe("8. Logout & session revocation", () => {
     // Access token CU (da revoke o Supabase) cung phai tu choi khi dung Bearer
     const bearer = await api("GET", "/api/mangas", { bearer: accessToken, origin: null });
     expect(bearer.status).toBe(401);
+  });
+
+  test("8.2 logout chi co refresh cookie (access thieu) -> refresh-then-revoke: refresh token CU chet", async () => {
+    // Login lai (tao session moi)
+    const login = await api("POST", "/api/auth/login", {
+      json: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+    });
+    expect(login.status).toBe(200);
+    jar.absorb(login);
+    const oldRefreshToken = jar.jar.get("tsundoku_rt") ?? "";
+    expect(oldRefreshToken.length).toBeGreaterThan(10);
+
+    // Xoa access cookie — chi con refresh cookie (mo phong access het han/thieu)
+    jar.jar.delete("tsundoku_at");
+
+    const res = await api("POST", "/api/auth/logout", { cookies: jar });
+    expect(res.status).toBe(200);
+    jar.absorb(res);
+    expect(jar.jar.has("tsundoku_rt")).toBe(false);
+
+    // Refresh token CU khong dung lai duoc: dung session family da bi revoke.
+    // (Server da refresh-then-revoke: rotation tieu thu RT cu + revoke session moi.)
+    const reuse = await fetch(`${BASE}/api/auth/refresh`, {
+      method: "POST",
+      headers: { origin: ORIGIN, cookie: `tsundoku_rt=${oldRefreshToken}` },
+    });
+    expect([400, 401]).toContain(reuse.status);
+    const reuseBody = (await reuse.json().catch(() => ({}))) as { refreshed?: boolean };
+    expect(reuseBody.refreshed).toBeUndefined();
+  });
+
+  test("8.3 logout access token het han/sai + refresh con han -> van revoke duoc session family", async () => {
+    // Login lai
+    const login = await api("POST", "/api/auth/login", {
+      json: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+    });
+    expect(login.status).toBe(200);
+    jar.absorb(login);
+    const oldRefreshToken = jar.jar.get("tsundoku_rt") ?? "";
+
+    // Thay access cookie bang token RAC (mo phong access da het han —
+    // Supabase se tra 401 cho revoke truc tiep -> phai di qua refresh-then-revoke)
+    jar.jar.set("tsundoku_at", "expired-or-garbage-access-token");
+
+    const res = await api("POST", "/api/auth/logout", { cookies: jar });
+    expect(res.status).toBe(200);
+    jar.absorb(res);
+
+    // Refresh token CU da bi tieu thu (rotation) + session moi da bi revoke
+    const reuse = await fetch(`${BASE}/api/auth/refresh`, {
+      method: "POST",
+      headers: { origin: ORIGIN, cookie: `tsundoku_rt=${oldRefreshToken}` },
+    });
+    expect([400, 401]).toContain(reuse.status);
+  });
+
+  test("8.4 logout lap lai (khong con cookie nao) -> 200 idempotent", async () => {
+    const res = await api("POST", "/api/auth/logout", { cookies: jar });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { loggedOut?: boolean };
+    expect(body.loggedOut).toBe(true);
+  });
+
+  test("8.5 logout voi refresh token SAI -> 200 an toan (session family da chet)", async () => {
+    const fakeJar = new CookieJar();
+    fakeJar.jar.set("tsundoku_rt", "invalid-refresh-token-value");
+    const res = await api("POST", "/api/auth/logout", { cookies: fakeJar });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { loggedOut?: boolean };
+    expect(body.loggedOut).toBe(true);
+  });
+
+  test("8.6 don dep manga test chinh TRUOC khi burn rate limit (de cleanup khong bi 429 chan)", async () => {
+    if (!createdMangaId) return;
+    const login = await api("POST", "/api/auth/login", {
+      json: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+    });
+    expect(login.status).toBe(200);
+    jar.absorb(login);
+    const res = await api("DELETE", `/api/mangas/${createdMangaId}`, { cookies: jar });
+    expect(res.status).toBe(200);
+    createdMangaId = null;
+    await api("POST", "/api/auth/logout", { cookies: jar });
+    jar.absorb(await api("POST", "/api/auth/logout", { cookies: jar })); // idempotent
   });
 });
 
@@ -738,11 +1050,15 @@ describe("9. Rate limit login (chay CUOI — khoa IP 15 phut)", () => {
 });
 
 // =============================================================
-describe("10. Don dep du lieu test", () => {
-  test("xoa manga test chinh", async () => {
-    if (!createdMangaId) return;
-    // Login lai (rate limit co the chan — neu bi chan thi dung DB truc tiep khong duoc
-    // tu test; thay vao do cho 429 va danh dau cleanup = pending)
+describe("10. Don dep du lieu test (da don chu yeu o 8.6 — day la phong thi hai)", () => {
+  test("khong con manga test nao loi lai (8.6 da don sau khi burn rate limit)", async () => {
+    // Neu 8.6 da chay thi createdMangaId = null. Neu roi vao truong hop
+    // dac biet (test fail giua chang), thu login lai — neu bi 429 thi
+    // manga se bi cleanup PENDING tu dong (24h), khong anh huong du lieu that.
+    if (!createdMangaId) {
+      expect(createdMangaId).toBeNull();
+      return;
+    }
     const login = await api("POST", "/api/auth/login", {
       json: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
     });
@@ -754,7 +1070,6 @@ describe("10. Don dep du lieu test", () => {
     const res = await api("DELETE", `/api/mangas/${createdMangaId}`, { cookies: jar });
     expect(res.status).toBe(200);
     createdMangaId = null;
-    // Logout lai
     await api("POST", "/api/auth/logout", { cookies: jar });
   });
 });

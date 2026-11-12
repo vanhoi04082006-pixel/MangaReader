@@ -2,7 +2,7 @@
 // PATCH /api/mangas/:id — cap nhat
 // DELETE /api/mangas/:id — xoa (cascade DB + R2)
 import { NextRequest, NextResponse } from "next/server";
-import { ok, fail, parseBody, requireAdmin, requireAdminMutation, withErrorHandling } from "@/lib/api";
+import { ok, fail, parseBody, requireAdmin, requireAdminMutation, requireAdminDestructive, withErrorHandling } from "@/lib/api";
 import { attachCoverUrl } from "@/lib/cover-url";
 import { mangaUpdateSchema } from "@/schemas";
 import { getMangaDetail, updateManga, deleteManga } from "@/services/manga-service";
@@ -29,7 +29,9 @@ export const PATCH = withErrorHandling<Ctx>(async (req, ctx) => {
 });
 
 export const DELETE = withErrorHandling<Ctx>(async (req, ctx) => {
-  await requireAdminMutation(req);
+  // Thao tac pha hoi (cascade DB + xoa object R2) -> xac minh session truc tiep
+  // voi Supabase (khong qua cache 90s — xem requireAdminDestructive).
+  await requireAdminDestructive(req);
   const { id } = await ctx.params;
   const result = await deleteManga(id);
   return ok(result);

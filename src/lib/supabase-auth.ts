@@ -147,6 +147,19 @@ export async function sbAdminCreateUser(
 }
 
 /**
+ * Trang thai revoke session — phan biet ro ket qua that de logout ghi nhan
+ * TRUNG THUC (khong bao cao "da revoke" khi Supabase tu choi/khong lien lac duoc).
+ *
+ * - "revoked"    : Supabase xac nhan revoke (204).
+ * - "rejected"   : 401/403 — access token bi tu choi (het han/da revoke/sai).
+ *                  LUU Y: session family co the VAN CON SONG qua refresh token
+ *                  -> nguoi goi phai thu refresh-then-revoke khi con refresh token.
+ * - "unreachable": loi mang — khong the xac nhan trang thai that.
+ * - "error"      : Supabase tra loi khac (5xx...) — khong xac nhan duoc.
+ */
+export type RevokeStatus = "revoked" | "rejected" | "unreachable" | "error";
+
+/**
  * Revoke session (logout) — POST /auth/v1/logout.
  *
  * Semantics Supabase Auth: endpoint nay revoke SESSION ma ACCESS TOKEN
@@ -154,9 +167,10 @@ export async function sbAdminCreateUser(
  * session do). Truoc day code truyen publishable key lam Bearer -> Supabase
  * khong revoke dung session (loi 401 im lang). Phai dung access token cua user.
  */
-export async function sbRevokeSession(accessToken: string): Promise<boolean> {
+export async function sbRevokeSessionStatus(accessToken: string): Promise<RevokeStatus> {
   try {
     const env = getEnv();
+    if (!env.supabase.url) return "error";
     const res = await fetch(`${env.supabase.url}/auth/v1/logout`, {
       method: "POST",
       headers: {
@@ -167,13 +181,17 @@ export async function sbRevokeSession(accessToken: string): Promise<boolean> {
       body: JSON.stringify({}),
       cache: "no-store",
     });
-    // 204 = revoked. 401/403 = token da het han/da revoke (van coi nhu da ket thuc).
-    if (res.status === 204 || res.ok) return true;
-    if (res.status === 401 || res.status === 403) return true;
+    if (res.status === 204 || res.ok) return "revoked";
+    if (res.status === 401 || res.status === 403) return "rejected";
     console.error("[supabase-auth] logout revoke failed:", res.status, await res.text().catch(() => ""));
-    return false;
+    return "error";
   } catch (err) {
     console.error("[supabase-auth] logout revoke network error:", err);
-    return false;
+    return "unreachable";
   }
+}
+
+/** Wrapper tien ich (best-effort) — dung cho cac noi chi can thu revoke co hoi. */
+export async function sbRevokeSession(accessToken: string): Promise<boolean> {
+  return (await sbRevokeSessionStatus(accessToken)) === "revoked";
 }

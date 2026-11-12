@@ -2,7 +2,7 @@
 // PATCH /api/chapters/:id — cap nhat chuong
 // DELETE /api/chapters/:id — xoa chuong (DB + R2 dong bo)
 import { NextRequest, NextResponse } from "next/server";
-import { ok, fail, parseBody, requireAdmin, requireAdminMutation, withErrorHandling } from "@/lib/api";
+import { ok, fail, parseBody, requireAdmin, requireAdminMutation, requireAdminDestructive, withErrorHandling } from "@/lib/api";
 import { chapterUpdateSchema } from "@/schemas";
 import {
   updateChapter,
@@ -51,7 +51,8 @@ export const PATCH = withErrorHandling<Ctx>(async (req, ctx) => {
 });
 
 export const DELETE = withErrorHandling<Ctx>(async (req, ctx) => {
-  await requireAdminMutation(req);
+  // Thao tac pha hoi (DB + xoa object R2) -> xac minh session truc tiep voi Supabase.
+  await requireAdminDestructive(req);
   const { id } = await ctx.params;
   const result = await deleteChapter(id);
   return ok(result);

@@ -15,7 +15,13 @@ function setNodeEnv(v: string) {
 import { localJwtSign, ACCESS_COOKIE } from "../src/lib/session";
 
 // Canh bao: khong import module session truoc khi set env o cac test provider
-import { effectiveAuthProvider, isAdminUser } from "../src/lib/env";
+import {
+  effectiveAuthProvider,
+  isAdminUser,
+  missingEnvVars,
+  isValidUuid,
+  adminIdentityConfigIssue,
+} from "../src/lib/env";
 import type { SessionUser } from "../src/lib/session";
 
 function localJwtVerify(token: string, secret: string): Record<string, unknown> | null {
@@ -112,6 +118,127 @@ describe("isAdminUser (admin identity boundary)", () => {
     expect(isAdminUser({ id: "local-admin", email: "wrong@example.com" })).toBe(false);
     expect(isAdminUser({ id: "other", email: "admin@manga.vn" })).toBe(false);
     delete process.env.AUTH_PROVIDER;
+  });
+});
+
+// =============================================================
+// TASK 1: ADMIN_USER_ID bat buoc trong production (fail closed)
+// =============================================================
+describe("ADMIN_USER_ID bat buoc trong production", () => {
+  const ADMIN_UUID = "7228d6e8-3f7b-4443-bdb6-1543b7afb4d6";
+  const realAdmin: SessionUser = { id: ADMIN_UUID, email: "admin@manga.vn" };
+
+  beforeEach(() => {
+    setNodeEnv("development");
+    process.env.AUTH_PROVIDER = "supabase";
+    process.env.ADMIN_EMAIL = "admin@manga.vn";
+    delete process.env.ADMIN_USER_ID;
+  });
+
+  test("1. email dung + UUID dung -> PASS", () => {
+    setNodeEnv("production");
+    process.env.ADMIN_USER_ID = ADMIN_UUID;
+    expect(isAdminUser(realAdmin)).toBe(true);
+  });
+
+  test("2. email dung + UUID SAI -> tu choi (403)", () => {
+    setNodeEnv("production");
+    process.env.ADMIN_USER_ID = "11111111-2222-3333-4444-555555555555";
+    expect(isAdminUser(realAdmin)).toBe(false);
+  });
+
+  test("3. email dung + THIEU UUID trong production -> FAIL CLOSED (khong fallback email-only)", () => {
+    setNodeEnv("production");
+    delete process.env.ADMIN_USER_ID;
+    expect(isAdminUser(realAdmin)).toBe(false); // email khong du trong production
+    expect(adminIdentityConfigIssue()).toContain("ADMIN_USER_ID");
+  });
+
+  test("4. UUID MAI DINH DANG -> fail closed + readiness bao cao", () => {
+    setNodeEnv("production");
+    process.env.ADMIN_USER_ID = "not-a-uuid";
+    expect(isAdminUser(realAdmin)).toBe(false);
+    expect(adminIdentityConfigIssue()).toContain("ADMIN_USER_ID");
+    expect(missingEnvVars().some((v) => v.startsWith("ADMIN_USER_ID"))).toBe(true);
+    // Dev cung bao cao mai dinh dang (phat hien som, khong dem loi vao production)
+    setNodeEnv("development");
+    expect(missingEnvVars().some((v) => v.startsWith("ADMIN_USER_ID"))).toBe(true);
+  });
+
+  test("5. user Supabase khac (UUID khac, email giong admin) -> tu choi", () => {
+    setNodeEnv("production");
+    process.env.ADMIN_USER_ID = ADMIN_UUID;
+    const impostor: SessionUser = { id: "99999999-9999-9999-9999-999999999999", email: "admin@manga.vn" };
+    expect(isAdminUser(impostor)).toBe(false);
+  });
+
+  test("6. provider local trong production -> tu choi (da co o suite tren — doi chieu lai)", () => {
+    setNodeEnv("production");
+    process.env.AUTH_PROVIDER = "local";
+    delete process.env.ADMIN_USER_ID;
+    expect(isAdminUser(realAdmin)).toBe(false);
+    expect(effectiveAuthProvider()).toBe(null);
+  });
+
+  test("dev: thieu UUID van cho qua (bootstrap workflow duoc tai lieu hoa)", () => {
+    setNodeEnv("development");
+    delete process.env.ADMIN_USER_ID;
+    expect(isAdminUser(realAdmin)).toBe(true);
+    expect(adminIdentityConfigIssue()).toBe(null);
+  });
+
+  test("production: thieu UUID duoc missingEnvVars bao cao (readiness degraded)", () => {
+    setNodeEnv("production");
+    delete process.env.ADMIN_USER_ID;
+    expect(missingEnvVars().some((v) => v.startsWith("ADMIN_USER_ID"))).toBe(true);
+  });
+
+  test("production: UUID dung -> missingEnvVars KHONG bao cao ADMIN_USER_ID", () => {
+    setNodeEnv("production");
+    process.env.ADMIN_USER_ID = ADMIN_UUID;
+    expect(missingEnvVars().some((v) => v.startsWith("ADMIN_USER_ID"))).toBe(false);
+  });
+});
+
+// =============================================================
+// TASK 4: ADMIN_PASSWORD bootstrap-only — khong con la bien bat buoc
+// =============================================================
+describe("ADMIN_PASSWORD bootstrap-only (readiness khong doi hoi)", () => {
+  beforeEach(() => {
+    setNodeEnv("production");
+    process.env.AUTH_PROVIDER = "supabase";
+    process.env.ADMIN_EMAIL = "admin@manga.vn";
+    process.env.ADMIN_USER_ID = "7228d6e8-3f7b-4443-bdb6-1543b7afb4d6";
+    delete process.env.ADMIN_PASSWORD;
+  });
+
+  test("production + supabase + KHONG ADMIN_PASSWORD -> missingEnvVars KHONG bao cao", () => {
+    // Sau bootstrap (tai khoan da ton tai trong Supabase Auth) readiness phai OK
+    expect(missingEnvVars().some((v) => v.includes("ADMIN_PASSWORD"))).toBe(false);
+  });
+
+  test("dev + supabase + KHONG ADMIN_PASSWORD -> KHONG bao cao", () => {
+    setNodeEnv("development");
+    expect(missingEnvVars().some((v) => v.includes("ADMIN_PASSWORD"))).toBe(false);
+  });
+
+  test("login route khong can ADMIN_PASSWORD khi tai khoan da ton tai (provider + UUID dung van cho phep)", () => {
+    // IsAdminUser (ranh gioi quyen sau khi Supabase xac thuc) khong doc password
+    const user: SessionUser = { id: process.env.ADMIN_USER_ID!, email: "admin@manga.vn" };
+    expect(isAdminUser(user)).toBe(true);
+  });
+});
+
+// ---- UUID validation ----
+describe("isValidUuid", () => {
+  test("UUID dung / sai dinh dang", () => {
+    expect(isValidUuid("7228d6e8-3f7b-4443-bdb6-1543b7afb4d6")).toBe(true);
+    expect(isValidUuid("7228D6E8-3F7B-4443-BDB6-1543B7AFB4D6")).toBe(true); // case-insensitive
+    expect(isValidUuid(" 7228d6e8-3f7b-4443-bdb6-1543b7afb4d6 ")).toBe(true); // trim
+    expect(isValidUuid("not-a-uuid")).toBe(false);
+    expect(isValidUuid("")).toBe(false);
+    expect(isValidUuid("7228d6e8-3f7b-4443-bdb6-1543b7afb4d")).toBe(false); // thieu 1 ky tu
+    expect(isValidUuid("11111111-2222-3333-4444-555555555555")).toBe(true);
   });
 });
 

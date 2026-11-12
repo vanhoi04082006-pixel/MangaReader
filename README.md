@@ -30,7 +30,7 @@ Website đọc truyện tranh cá nhân (single-admin) với lưu trữ ảnh tr
 ### Xác thực & phân quyền (single-admin)
 - Đăng nhập bằng email/mật khẩu qua **Supabase Auth**. Chế độ `AUTH_PROVIDER=local` (JWT tự cấp) **chỉ dùng cho dev** — production tự chối (fail-closed).
 - **Không có trang đăng ký** — chỉ duy nhất tài khoản admin (`ADMIN_EMAIL`), bootstrap qua `bun run scripts/bootstrap-admin.ts` (tách khỏi luồng login thường).
-- **Ranh giới phân quyền trung tâm `requireAdmin()`**: mọi API bảo vệ kiểm tra server-side (i) session hợp lệ, (ii) email khớp admin, (iii) UUID khớp `ADMIN_USER_ID` nếu cấu hình. Non-admin nhận 403 — kể cả khi có session Supabase hợp lệ.
+- **Ranh giới phân quyền trung tâm `requireAdmin()`**: mọi API bảo vệ kiểm tra server-side (i) session hợp lệ, (ii) email khớp admin, (iii) UUID khớp `ADMIN_USER_ID` — **bắt buộc trong production** (thiếu/malformed → từ chối hoàn toàn, không fallback email-only). Non-admin nhận 403 — kể cả khi có session Supabase hợp lệ.
 - Session bằng httpOnly cookie (Secure + SameSite=Lax ở production) + tự động refresh; logout revoke session ở Supabase và xóa cache xác minh ngay.
 - **CSRF**: mọi mutation dùng cookie bị kiểm tra Origin/Referer/Sec-Fetch-Site (cross-site → 403).
 - **Rate limit** (DB-backed, tương thích Vercel serverless): login 10/15 phút/IP, refresh, presign, upload, cleanup...
@@ -96,7 +96,7 @@ bun run db:push               # tạo SQLite dev (KHÔNG dùng --accept-data-los
 bun run dev                   # http://localhost:3000  (Windows: bun run dev:win)
 ```
 
-Đăng nhập bằng `ADMIN_EMAIL`/`ADMIN_PASSWORD` trong `.env` (bootstrap tài khoản Supabase lần đầu — xem mục 4).
+Đăng nhập bằng `ADMIN_EMAIL` + mật khẩu (quản lý bởi Supabase Auth). `ADMIN_PASSWORD` trong `.env` **chỉ dùng bootstrap** (tạo tài khoản lần đầu) — xem mục 4.
 
 ### Các lệnh
 
@@ -110,8 +110,9 @@ bun run dev                   # http://localhost:3000  (Windows: bun run dev:win
 | `bun run db:push` | Áp schema SQLite cho dev (không mất dữ liệu) |
 | `bun run db:generate` / `db:generate:pg` | Sinh Prisma client (SQLite / PostgreSQL) |
 | `bun run scripts/bootstrap-admin.ts` | Bootstrap tài khoản admin (in UUID cho `ADMIN_USER_ID`) |
+| `bun run verify:rls` (`scripts/verify-rls.ts`) | Kiểm tra RLS qua PostgREST (chạy sau migration) — tách apikey/bearer, xác minh session non-admin thật |
+| `bun run db:migrate:sqlite-to-postgres` | Chuyển dữ liệu SQLite dev → PostgreSQL (dry-run mặc định; `--apply` để ghi) |
 | `bun run scripts/setup-r2.ts` | Kiểm tra bucket + CORS + roundtrip presign |
-| `bun run scripts/verify-rls.ts` | Kiểm tra RLS qua PostgREST (chạy sau migration) |
 
 ---
 
@@ -121,14 +122,17 @@ bun run dev                   # http://localhost:3000  (Windows: bun run dev:win
    - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (publishable)
    - `SUPABASE_SERVICE_SECRET_KEY` (secret — **chỉ server**, không đặt `NEXT_PUBLIC_`)
 2. **Vô hiệu hóa đăng ký**: Authentication > Sign In / Up > tắt "Allow new users to sign up" (website single-admin).
-3. **Bootstrap admin**:
+3. **Bootstrap admin** (chỉ làm 1 lần khi triển khai lần đầu):
    ```bash
    bun run scripts/bootstrap-admin.ts
    ```
    Script tạo tài khoản admin (email_confirm = true) và in **UUID**. Đặt UUID đó vào `ADMIN_USER_ID` trong `.env` (và biến môi trường Vercel).
+
+   **Vòng đời `ADMIN_PASSWORD` (bootstrap-only)**: biến này chỉ cần lúc tạo tài khoản lần đầu. Sau khi tài khoản đã tồn tại trong Supabase Auth: (1) đổi mật khẩu tại Authentication > Users, (2) **xóa `ADMIN_PASSWORD`** khỏi env production. Login/refresh/logout/readiness hoạt động bình thường không cần nó — mật khẩu do Supabase Auth quản lý. Ứng dụng không bao giờ tạo lại/reset tài khoản admin đã tồn tại.
 4. **Chạy migration SQL** (production): mở **SQL Editor**, dán toàn bộ `supabase/migrations/0001_init.sql`, Run. Migration tạo 12 bảng (10 bảng dữ liệu + `app_config` + `rate_limit_hits`), bật RLS **admin-only** và seed `app_config.admin_user_id`.
-5. Xác minh RLS: `bun run scripts/verify-rls.ts` (anon + non-admin bị từ chối).
-6. Sau khi bootstrap, **đổi mật khẩu** tại Authentication > Users và **xóa `ADMIN_PASSWORD`** khỏi env production (chỉ cần lúc đầu).
+5. Xác minh RLS: `bun run verify:rls` (anon + non-admin bị từ chối — script tạo user Supabase tạm + dòng test riêng, xóa sạch sau).
+6. **Chuyển dữ liệu SQLite dev sang PostgreSQL** (nếu cần giữ dữ liệu cũ): `bun run db:migrate:sqlite-to-postgres` (dry-run trước, `--apply` khi chắc chắn — xem chi tiết trong script).
+7. `ADMIN_USER_ID` **bắt buộc trong production**: readiness (`/api/health/ready`) báo degraded nếu thiếu, sai định dạng UUID, hoặc không khớp `app_config.admin_user_id`.
 
 ---
 

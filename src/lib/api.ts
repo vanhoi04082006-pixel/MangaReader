@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getSessionUser, type SessionUser } from "@/lib/session";
+import { getSessionUser, getSessionUserStrict, type SessionUser } from "@/lib/session";
 import { SupabaseAuthError } from "@/lib/supabase-auth";
 import { isAdminUser, getEnv } from "@/lib/env";
 
@@ -134,6 +134,26 @@ export function assertSameOrigin(req: NextRequest): void {
 export async function requireAdminMutation(req: NextRequest): Promise<SessionUser> {
   assertSameOrigin(req);
   return requireAdmin(req);
+}
+
+/**
+ * Guard cho thao tac PHA HOAI (xoa truyen/chapter/trang, cleanup storage):
+ * CSRF + admin + xac minh session TRUC TIEP voi Supabase (khong qua cache 90s).
+ *
+ * Ly do: cache xac minh chi ton tai tren runtime instance hien tai (globalThis);
+ * tren Vercel moi serverless instance co cache rieng — logout khong the xoa
+ * cache cua tat ca instance. Xac minh truc tiep: Supabase /auth/v1/user tu choi
+ * access token cua session da revoke (claim session_id) -> thao tac xoa khong
+ * the duoc thuc hien bang token da logout, tren BAT KY instance nao.
+ */
+export async function requireAdminDestructive(req: NextRequest): Promise<SessionUser> {
+  assertSameOrigin(req);
+  const user = await getSessionUserStrict(req);
+  if (!user) throw new ApiError("Chưa đăng nhập hoặc phiên đã hết hạn.", 401, "unauthorized");
+  if (!isAdminUser(user)) {
+    throw new ApiError("Tài khoản không có quyền thực hiện thao tác này.", 403, "forbidden");
+  }
+  return user;
 }
 
 /** Parse JSON body theo zod schema — throw ApiError 400 co thong bao ro rang */

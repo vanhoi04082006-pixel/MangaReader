@@ -6,8 +6,9 @@
 // - Chi cho phep key da dang ky qua /api/uploads/presign VA con o trang
 //   thai PENDING (chong thay the object tuy y / object da confirm)
 // - Content-Type phai khop metadata da dang ky
-// - DEM BYTE THUC TE khi doc body + chan ngay khi vuot MAX_FILE_SIZE
-//   (khong tin Content-Length header — co the thieu/0)
+// - DEM BYTE THUC TE khi doc body + CHAN NGAY khi vuot MAX_PROXY_FILE_SIZE
+//   (4MB — khong tin Content-Length header, khong cho phep ngam body lon
+//   hon gioi han proxy vao bo nho; file lon phai di presigned PUT truc tiep)
 // - Kich thuoc thuc te phai DUNG BANG da dang ky khi presign
 // - Gioi han kich thuoc phu hop Vercel serverless (~4.5MB body)
 //   -> file lon PHAI di qua presigned PUT truc tiep len R2
@@ -98,23 +99,30 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
     );
   }
 
-  // ---- Doc body voi bo dem byte thuc te + chan vuot gioi han ----
-  // (S3 PUT la atomic: upload bi gian doan khong tao object le tren R2)
+  // ---- Doc body voi bo dem byte thuc te + chan ngay tai gioi han PROXY ----
+  // Gioi han streaming la MAX_PROXY_FILE_SIZE (4MB) chu KHONG phai MAX_FILE_SIZE
+  // (100MB): proxy chi phuc vu file nho — mot body khai bao sai (nho) nhung
+  // stream rat lon phai bi chan ngay khi vuot 4MB, khong cho phep tiep tuc
+  // ngam body vao bo nho (S3 PUT la atomic: upload bi gian doan khong tao
+  // object le tren R2; PUT chi thuc hien SAU khi doc het body thanh cong).
   const chunks: Buffer[] = [];
   let actualBytes = 0;
-  let overflowed = false;
+  let overflowedProxy = false;
   try {
     const reader = req.body.getReader();
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
-      actualBytes += value.byteLength;
-      if (actualBytes > MAX_FILE_SIZE) {
-        overflowed = true;
+      const nextBytes = actualBytes + value.byteLength;
+      if (nextBytes > MAX_PROXY_FILE_SIZE) {
+        // Vuot gioi han proxy: huy reader NGAY LAP TUC, khong giu chunk tran.
+        overflowedProxy = true;
+        actualBytes = nextBytes;
         await reader.cancel().catch(() => undefined);
         break;
       }
+      actualBytes = nextBytes;
       chunks.push(Buffer.from(value));
     }
   } catch (err) {
@@ -122,7 +130,17 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
     return fail("Dữ liệu upload bị gián đoạn.", 400, "body_interrupted");
   }
 
-  if (overflowed || actualBytes > MAX_FILE_SIZE) {
+  if (overflowedProxy || actualBytes > MAX_PROXY_FILE_SIZE) {
+    return fail(
+      `Body vượt quá giới hạn proxy ${Math.round(MAX_PROXY_FILE_SIZE / 1024 / 1024)}MB (đã nhận ≥ ${actualBytes} byte). File lớn phải upload trực tiếp qua presigned PUT.`,
+      413,
+      "proxy_too_large"
+    );
+  }
+
+  // Bao ve phong thi hai: body khong the vuot 4MB (chan o tren), nhung van
+  // kiem tra lai voi gioi han tuyet doi cua anh.
+  if (actualBytes > MAX_FILE_SIZE) {
     return fail(
       `File vượt quá giới hạn ${(MAX_FILE_SIZE / 1024 / 1024) | 0}MB (đã nhận ${actualBytes} byte).`,
       413,
