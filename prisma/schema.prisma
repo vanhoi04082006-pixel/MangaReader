@@ -1,0 +1,187 @@
+// =============================================================
+// TSUNDOKU - Personal Manga Reader
+// Prisma schema (SQLite - sandbox/dev)
+//
+// Production tren Supabase Postgres: dung prisma/schema.postgres.prisma
+// (cung model, provider = "postgresql") - xem README "Database" section.
+//
+// Chu y: khong dung enum (SQLite khong ho tro) - trang thai duoc
+// validate boi zod schema o src/schemas/
+// =============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---- Tai khoan (map 1-1 voi Supabase Auth user) --------------
+model Profile {
+  id          String   @id // supabase user id (uuid) hoac "local-admin"
+  email       String   @unique
+  displayName String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  favorites       Favorite[]
+  readingProgress ReadingProgress[]
+  readingHistory  ReadingHistory[]
+}
+
+// ---- Truyện ---------------------------------------------------
+model Manga {
+  id                String    @id @default(uuid())
+  title             String
+  alternativeTitles String? // danh sach tach boi dau phay
+  description       String?
+  author            String?
+  artist            String?
+  status            String    @default("ONGOING") // ONGOING | COMPLETED | HIATUS | DROPPED
+  publicationYear   Int?
+  coverImageKey     String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  chapters       Chapter[]
+  genres         MangaGenre[]
+  favorites      Favorite[]
+  readingProgress ReadingProgress[]
+  readingHistory ReadingHistory[]
+  storageObjects StorageObject[]
+
+  @@index([title])
+  @@index([status])
+  @@index([createdAt])
+  @@index([updatedAt])
+}
+
+// ---- Chương ---------------------------------------------------
+model Chapter {
+  id            String   @id @default(uuid())
+  mangaId       String
+  chapterNumber String // text de ho tro "5.5", "extra", "omake"...
+  title         String?
+  volume        String?
+  pageCount     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  manga    Manga             @relation(fields: [mangaId], references: [id], onDelete: Cascade)
+  pages    Page[]
+  progress ReadingProgress[]
+  history  ReadingHistory[]
+  storageObjects StorageObject[]
+
+  @@unique([mangaId, chapterNumber])
+  @@index([mangaId])
+}
+
+// ---- Trang truyện ----------------------------------------------
+model Page {
+  id         String   @id @default(uuid())
+  chapterId  String
+  pageNumber Int
+  objectKey  String   @unique // object key tren R2
+  fileName   String
+  mimeType   String
+  fileSize   Int // bytes
+  width      Int?
+  height     Int?
+  createdAt  DateTime @default(now())
+
+  chapter Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@unique([chapterId, pageNumber])
+  @@index([chapterId])
+  @@index([objectKey])
+}
+
+// ---- Thể loại --------------------------------------------------
+model Genre {
+  id     String @id @default(uuid())
+  name   String @unique
+  mangas MangaGenre[]
+}
+
+model MangaGenre {
+  mangaId String
+  genreId String
+  manga   Manga @relation(fields: [mangaId], references: [id], onDelete: Cascade)
+  genre   Genre @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@id([mangaId, genreId])
+  @@index([genreId])
+}
+
+// ---- Yêu thích --------------------------------------------------
+model Favorite {
+  userId    String
+  mangaId   String
+  createdAt DateTime @default(now())
+
+  user  Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  manga Manga   @relation(fields: [mangaId], references: [id], onDelete: Cascade)
+
+  @@id([userId, mangaId])
+  @@index([mangaId])
+}
+
+// ---- Tiến độ đọc (1 row / user / manga) -------------------------
+model ReadingProgress {
+  userId         String
+  mangaId        String
+  chapterId      String
+  pageNumber     Int    @default(1)
+  scrollPosition Float  @default(0) // 0..1
+  updatedAt      DateTime @updatedAt
+
+  user    Profile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  manga   Manga    @relation(fields: [mangaId], references: [id], onDelete: Cascade)
+  chapter Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@id([userId, mangaId])
+  @@index([updatedAt])
+  @@index([chapterId])
+}
+
+// ---- Lịch sử đọc (1 row / user / chapter, update readAt) --------
+model ReadingHistory {
+  id         String   @id @default(uuid())
+  userId     String
+  mangaId    String
+  chapterId  String
+  pageNumber Int      @default(1)
+  readAt     DateTime @default(now())
+
+  user    Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  manga   Manga   @relation(fields: [mangaId], references: [id], onDelete: Cascade)
+  chapter Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chapterId])
+  @@index([userId, readAt])
+}
+
+// ---- Metadata file tren R2 (theo doi upload & orphan cleanup) ---
+model StorageObject {
+  id          String    @id @default(uuid())
+  objectKey   String    @unique
+  kind        String // PAGE | COVER
+  status      String    @default("PENDING") // PENDING | CONFIRMED
+  fileName    String?
+  fileSize    Int       @default(0)
+  mimeType    String?
+  mangaId     String?
+  chapterId   String?
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+
+  manga   Manga?   @relation(fields: [mangaId], references: [id], onDelete: SetNull)
+  chapter Chapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([mangaId])
+  @@index([chapterId])
+}
