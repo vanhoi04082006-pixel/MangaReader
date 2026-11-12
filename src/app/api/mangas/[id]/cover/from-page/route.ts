@@ -1,6 +1,6 @@
 // POST /api/mangas/:id/cover/from-page — dat anh bia tu 1 trang cua truyen
 import { NextRequest, NextResponse } from "next/server";
-import { ok, requireUser, parseBody, fail, withErrorHandling } from "@/lib/api";
+import { ok, requireAdminMutation, parseBody, fail, withErrorHandling } from "@/lib/api";
 import { setCoverFromPageSchema } from "@/schemas";
 import { db } from "@/lib/db";
 import { copyObject, coverObjectKey, extFromMime } from "@/lib/r2";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
-  await requireUser(req);
+  await requireAdminMutation(req);
   const { id: mangaId } = await ctx.params;
   const { pageId } = await parseBody(req, setCoverFromPageSchema);
 

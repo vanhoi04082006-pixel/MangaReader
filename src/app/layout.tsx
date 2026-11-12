@@ -16,8 +16,8 @@ const mono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Tsundoku — Thư viện truyện cá nhân",
-    template: "%s · Tsundoku",
+    default: "MangaReader — Thư viện truyện cá nhân",
+    template: "%s · MangaReader",
   },
   description:
     "Thư viện truyện tranh cá nhân với Cloudflare R2 — upload, quản lý và đọc truyện mọi lúc mọi nơi.",

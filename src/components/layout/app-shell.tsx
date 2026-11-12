@@ -136,9 +136,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2.5 px-5 py-5">
-        <img src="/logo.svg" alt="Logo Tsundoku" className="h-9 w-9 rounded-xl" />
+        <img src="/logo.svg" alt="Logo MangaReader" className="h-9 w-9 rounded-xl" />
         <div>
-          <p className="text-base font-extrabold leading-tight tracking-tight">TSUNDOKU</p>
+          <p className="text-base font-extrabold leading-tight tracking-tight">MangaReader</p>
           <p className="text-[11px] text-muted-foreground">Thư viện truyện cá nhân</p>
         </div>
       </div>

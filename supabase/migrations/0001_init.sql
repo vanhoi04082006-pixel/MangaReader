@@ -1,21 +1,64 @@
 -- =============================================================
--- TSUNDOKU — Personal Manga Reader
--- Supabase PostgreSQL migration (production path)
+-- MangaReader — Personal Manga Reader
+-- Supabase PostgreSQL migration (production path) — BẢN CHỈNH SỬA
 --
 -- Cach dung:
 --   1. Mo Supabase Dashboard > SQL Editor
 --   2. Dan toan bo noi dung file nay vao va Run
 --   3. Cap nhat DATABASE_URL trong .env (xem README)
 --
+-- GHI CHÚ BẢO MẬT (đã chỉnh sửa so với bản đầu):
+-- Bản đầu dùng policy "authenticated full access" USING (true) —
+-- BẤT KỲ user Supabase nào đã xác thực cũng đọc/ghi được toàn bộ dữ
+-- liệu qua PostgREST. Bản này giới hạn mọi bảng về DUY NHẤT admin
+-- (xác định qua app_config.admin_user_id = auth.uid()).
+--
+-- Đã kiểm chứng ngày 2026-11-12: production DB CHƯA áp dụng bản gốc
+-- (không có bảng nào tồn tại) nên việc chỉnh sửa tại chỗ là an toàn,
+-- không ảnh hưởng dữ liệu.
+--
 -- Chu y ve RLS: Ung dung truy cap DB truc tiep qua Prisma
--- (role postgres, connection truc tiep) — RLS duoc BAT nhu
--- lop phong thu 2 (defense-in-depth) khi truy cap qua PostgREST
--- (anon key). Chinh sach: chi user da xac thuc (authenticated)
--- moi duoc doc/ghi — ung dung ca nhan 1 nguoi dung.
+-- (role postgres — table owner, KHÔNG bị RLS ràng buộc). RLS là
+-- lop phong thu thu hai (defense-in-depth) cho phuong thuc truy cap
+-- PostgREST (anon/publishable key). Ranh gioi phan quyen THẬT sự
+-- của ứng dụng nằm ở tầng API (requireAdmin — xem src/lib/api.ts).
 -- =============================================================
 
 -- extensions
 create extension if not exists "uuid-ossp";
+
+-- ============ APP_CONFIG (danh tinh admin) ============
+-- Luu UUID cua admin duy nhat. Khong co policy nao cho anon/
+-- authenticated tren bang nay -> tu choi moi truy cap qua PostgREST
+-- (chi postgres owner / service_role truy cap duoc).
+create table if not exists app_config (
+  key       text primary key,
+  value     text not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table app_config enable row level security;
+
+-- UUID admin hien tai (admin@manga.vn) — kiểm chứng tại
+-- Supabase Dashboard > Authentication > Users trước khi chạy.
+insert into app_config (key, value) values
+  ('admin_user_id', '7228d6e8-3f7b-4443-bdb6-1543b7afb4d6')
+on conflict (key) do nothing;
+
+-- Ham kiem tra admin: so khao auth.uid() voi app_config.admin_user_id
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists(
+    select 1 from app_config
+    where key = 'admin_user_id'
+      and value = (auth.uid())::text
+  )
+$$;
 
 -- ============ PROFILES (map auth.users) ============
 create table if not exists profiles (
@@ -127,11 +170,12 @@ create index if not exists idx_history_user_read on reading_history (user_id, re
 
 -- ============ STORAGE_OBJECTS ============
 -- metadata moi file tren R2 (track upload + orphan cleanup)
+-- status: PENDING (cho upload) | CONFIRMED (da finalize) | DELETE_PENDING (cho xoa R2, retry duoc)
 create table if not exists storage_objects (
   id           uuid primary key default uuid_generate_v4(),
   object_key   text unique not null,
   kind         text not null check (kind in ('PAGE','COVER')),
-  status       text not null default 'PENDING' check (status in ('PENDING','CONFIRMED')),
+  status       text not null default 'PENDING' check (status in ('PENDING','CONFIRMED','DELETE_PENDING')),
   file_name    text,
   file_size    bigint not null default 0,
   mime_type    text,
@@ -144,10 +188,22 @@ create index if not exists idx_storage_status_created on storage_objects (status
 create index if not exists idx_storage_manga on storage_objects (manga_id);
 create index if not exists idx_storage_chapter on storage_objects (chapter_id);
 
+-- ============ RATE_LIMIT_HITS ============
+-- DB-backed rate limiter (fixed window). Khong co policy -> anon/
+-- authenticated bi tu choi qua PostgREST; chi app (Prisma) ghi.
+create table if not exists rate_limit_hits (
+  key          text not null,
+  window_start timestamptz not null,
+  count        integer not null default 0,
+  primary key (key, window_start)
+);
+create index if not exists idx_rate_limit_window on rate_limit_hits (window_start);
+
 -- =============================================================
 -- ROW LEVEL SECURITY
--- Moi table: chi user da xac thuc (authenticated) duoc truy cap.
--- Website ca nhan — khong co anonymous access.
+-- Moi bang du lieu: CHI admin (theo app_config.admin_user_id)
+-- duoc truy cap qua PostgREST. profiles: user chi doc/tao dong
+-- cua chinh minh (phong thu), admin toan quyen.
 -- =============================================================
 
 alter table profiles         enable row level security;
@@ -160,16 +216,25 @@ alter table favorites        enable row level security;
 alter table reading_progress enable row level security;
 alter table reading_history  enable row level security;
 alter table storage_objects  enable row level security;
+alter table rate_limit_hits  enable row level security;
 
--- profiles: moi user chi thay chinh minh
+-- profiles: moi user chi thay chinh minh (phong thu); admin toan quyen
 drop policy if exists "profiles self access" on profiles;
-create policy "profiles self access"
+create policy "profiles self select"
+  on profiles for select
+  to authenticated
+  using (auth.uid() = id);
+create policy "profiles self insert"
+  on profiles for insert
+  to authenticated
+  with check (auth.uid() = id);
+create policy "profiles admin all"
   on profiles for all
   to authenticated
-  using (auth.uid() = id)
-  with check (auth.uid() = id);
+  using (public.is_admin())
+  with check (public.is_admin());
 
--- cac table du lieu: authenticated full access
+-- cac bang du lieu: admin-only (thay the "authenticated full access" USING(true) cu)
 do $$
 declare t text;
 begin
@@ -177,10 +242,13 @@ begin
     'genres','mangas','chapters','pages','manga_genres',
     'favorites','reading_progress','reading_history','storage_objects'
   ] loop
+    -- xoa policy cu (ban dau) neu ton tai
     execute format('drop policy if exists "authenticated full access" on %I', t);
+    -- chinh sach admin-only cho moi hanh dong
+    execute format('drop policy if exists "%s admin all" on %I', t, t);
     execute format(
-      'create policy "authenticated full access" on %I for all to authenticated using (true) with check (true)',
-      t
+      'create policy "%s admin all" on %I for all to authenticated using (public.is_admin()) with check (public.is_admin())',
+      t, t
     );
   end loop;
 end $$;

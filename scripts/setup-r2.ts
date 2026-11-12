@@ -21,7 +21,7 @@ import { getEnv } from "../src/lib/env";
 
 async function main() {
   const env = getEnv();
-  console.log("=== TSUNDOKU R2 Setup ===");
+  console.log("=== MangaReader R2 Setup ===");
   console.log(`Endpoint : ${env.r2.endpoint}`);
   console.log(`Bucket   : ${env.r2.bucket}`);
   console.log("");
@@ -59,7 +59,7 @@ async function main() {
 
   // 3) Roundtrip test presigned PUT/GET (object-level permission)
   const testKey = `_setup-test/roundtrip-${Date.now()}.txt`;
-  const testContent = `tsundoku-r2-roundtrip-${Date.now()}`;
+  const testContent = `mangareader-r2-roundtrip-${Date.now()}`;
   const putUrl = await presignPut({
     key: testKey,
     contentType: "text/plain",

@@ -1,24 +1,34 @@
-// POST /api/auth/login — dang nhap (Supabase Auth hoac local)
+// POST /api/auth/login — dang nhap (Supabase Auth hoac local dev)
+//
+// Bao mat:
+// - Rate limit theo IP + theo email (chong brute force)
+// - Chi email ADMIN_EMAIL duoc phep (single-admin)
+// - Neu ADMIN_USER_ID cau hinh -> UUID phai khop (chong doi mat admin identity)
+// - Provider local bi tu choi trong production (fail closed)
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { parseBody, ok, fail, withErrorHandling } from "@/lib/api";
-import { getEnv } from "@/lib/env";
+import { parseBody, ok, fail, withErrorHandling, assertSameOrigin } from "@/lib/api";
+import { getEnv, isAdminUser } from "@/lib/env";
 import {
   sbPasswordGrant,
   sbAdminGetUserByEmail,
   sbAdminCreateUser,
+  sbRevokeSession,
 } from "@/lib/supabase-auth";
 import {
   setAuthCookies,
   verifyLocalCredentials,
   localJwtSign,
 } from "@/lib/session";
+import { SupabaseAuthError } from "@/lib/supabase-auth";
 import { ensureProfile } from "@/services/profile-service";
+import { hitRateLimit, clientIp, RATE_LIMITS } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const POST = withErrorHandling(async (req: NextRequest) => {
+  assertSameOrigin(req);
   const { email, password } = await parseBody(
     req,
     z.object({
@@ -27,6 +37,30 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
     })
   );
   const env = getEnv();
+
+  // ---- Rate limit: theo IP va theo email (chong brute force) ----
+  const ip = clientIp(req);
+  const [byIp, byEmail] = await Promise.all([
+    hitRateLimit(`login:ip:${ip}`, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs),
+    hitRateLimit(`login:email:${email.trim().toLowerCase()}`, RATE_LIMITS.loginEmail.limit, RATE_LIMITS.loginEmail.windowMs),
+  ]);
+  if (!byIp.allowed || !byEmail.allowed) {
+    const retryAfterSec = Math.ceil(Math.max(byIp.retryAfterMs, byEmail.retryAfterMs) / 1000);
+    return NextResponse.json(
+      { error: "Thao tác quá nhanh, vui lòng thử lại sau.", code: "rate_limited" },
+      { status: 429, headers: { "Retry-After": String(Math.max(1, retryAfterSec)) } }
+    );
+  }
+
+  // ---- Provider validation (production phai Supabase, fail closed) ----
+  if (env.authProvider === null) {
+    // AUTH_PROVIDER=local trong production hoac gia tri khong hop le
+    return fail(
+      "Cấu hình xác thực không hợp lệ cho production (AUTH_PROVIDER=local bị cấm).",
+      500,
+      "config_invalid"
+    );
+  }
 
   if (env.authProvider === "local") {
     const user = verifyLocalCredentials(email, password);
@@ -44,23 +78,51 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
 
   // ---- Supabase mode ----
   // Chi cho phep duy nhat tai khoan admin (website ca nhan, khong co dang ky)
-  if (env.admin.email && email.trim().toLowerCase() !== env.admin.email.trim().toLowerCase()) {
+  if (env.admin.email && email.trim().toLowerCase() !== env.admin.email) {
     return fail("Tài khoản này không được phép truy cập hệ thống.", 403, "forbidden_account");
   }
 
-  // Bootstrap: tao admin user neu chua ton tai (email_confirm = true)
+  // Bootstrap (lan dau): tao admin user neu chua ton tai (email_confirm = true).
+  // Chi tao cho CHINH XAC email admin da cau hinh + can ADMIN_PASSWORD.
   try {
     const existing = await sbAdminGetUserByEmail(email);
     if (!existing && env.admin.password) {
-      await sbAdminCreateUser(email, env.admin.password);
+      const created = await sbAdminCreateUser(email, env.admin.password);
+      // Neu ADMIN_USER_ID da cau hinh ma user moi tao khac UUID -> ngay lap tuc bao loi
+      // (chong chiem admin email boi nguoi khac truoc khi owner bootstrap)
+      if (env.admin.userId && created.id.toLowerCase() !== env.admin.userId) {
+        return fail(
+          "UUID tài khoản admin vừa tạo không khớp ADMIN_USER_ID. Kiểm tra cấu hình.",
+          500,
+          "admin_identity_mismatch"
+        );
+      }
     }
   } catch (err) {
     console.error("[auth/login] bootstrap admin check failed:", err);
     // khong chan login neu admin API tam loi — van thu password grant
   }
 
-  const session = await sbPasswordGrant(email, password);
+  let session;
+  try {
+    session = await sbPasswordGrant(email, password);
+  } catch (err) {
+    // Supabase tra 400 cho sai credentials — chuan hoa thanh 401 (auth semantics)
+    if (err instanceof SupabaseAuthError && err.status === 400) {
+      return fail("Email hoặc mật khẩu không đúng.", 401, "invalid_credentials");
+    }
+    throw err;
+  }
   const user = { id: session.user.id, email: session.user.email ?? email };
+
+  // Kiem tra admin identity sau khi Supabase xac thuc thanh cong:
+  // email (da xac thuc boi Supabase) + UUID (neu ADMIN_USER_ID cau hinh)
+  if (!isAdminUser(user)) {
+    // Session hop le nhung khong phai admin -> revoke ngay de khong de lai session lang le
+    await sbRevokeSession(session.access_token).catch(() => undefined);
+    return fail("Tài khoản này không được phép truy cập hệ thống.", 403, "forbidden_account");
+  }
+
   await ensureProfile(user);
 
   const res = ok({ user, provider: "supabase" }) as NextResponse;

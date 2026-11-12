@@ -12,6 +12,7 @@
 "use client";
 
 import { api, putToR2, uploadViaProxy } from "@/lib/client/api";
+import { MAX_PROXY_FILE_SIZE } from "@/schemas";
 import type { PresignResponseDto } from "@/types";
 
 export type PageStatus = "pending" | "uploading" | "uploaded" | "error";
@@ -185,7 +186,16 @@ export class UploadEngine {
         await putToR2(presign.uploadUrl, blob, item.mimeType, track, signal);
       } catch (err) {
         if (signal.aborted) throw err;
-        // CORS / presigned URL het han -> proxy qua Next server
+        // CORS / presigned URL het han -> proxy qua Next server.
+        // NHUNG: proxy bi gioi han kich thuoc (Vercel ~4.5MB body) — file
+        // lon hon thi KHONG thu proxy, bao loi ro rang (can CORS cho bucket).
+        if (blob.size > MAX_PROXY_FILE_SIZE) {
+          throw new Error(
+            `Không upload trực tiếp được R2 (CORS/mạng) và file (${(blob.size / 1024 / 1024).toFixed(1)}MB) vượt giới hạn proxy (${(
+              MAX_PROXY_FILE_SIZE / 1024 / 1024
+            ) | 0}MB). Hãy cấu hình CORS cho bucket R2.`
+          );
+        }
         await uploadViaProxy(presign.objectKey, blob, item.mimeType, track, signal);
       }
 

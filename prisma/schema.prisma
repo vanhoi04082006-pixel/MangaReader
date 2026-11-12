@@ -1,9 +1,9 @@
 // =============================================================
-// TSUNDOKU - Personal Manga Reader
+// MangaReader - Personal Manga Reader
 // Prisma schema (SQLite - sandbox/dev)
 //
 // Production tren Supabase Postgres: dung prisma/schema.postgres.prisma
-// (cung model, provider = "postgresql") - xem README "Database" section.
+// (mapped @@map/@map sang snake_case + native types) — xem README "Database".
 //
 // Chu y: khong dung enum (SQLite khong ho tro) - trang thai duoc
 // validate boi zod schema o src/schemas/
@@ -169,7 +169,7 @@ model StorageObject {
   id          String    @id @default(uuid())
   objectKey   String    @unique
   kind        String // PAGE | COVER
-  status      String    @default("PENDING") // PENDING | CONFIRMED
+  status      String    @default("PENDING") // PENDING | CONFIRMED | DELETE_PENDING
   fileName    String?
   fileSize    Int       @default(0)
   mimeType    String?
@@ -184,4 +184,14 @@ model StorageObject {
   @@index([status, createdAt])
   @@index([mangaId])
   @@index([chapterId])
+}
+
+// ---- Rate limit (DB-backed fixed window, han che brute force) ---
+model RateLimitHit {
+  key         String
+  windowStart DateTime
+  count       Int      @default(0)
+
+  @@id([key, windowStart])
+  @@index([windowStart])
 }

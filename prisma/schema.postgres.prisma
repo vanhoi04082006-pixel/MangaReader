@@ -1,12 +1,16 @@
 // =============================================================
-// TSUNDOKU - Personal Manga Reader
+// MangaReader - Personal Manga Reader
 // Prisma schema (Supabase PostgreSQL - production)
 //
-// Production tren Supabase Postgres: dung prisma/schema.postgres.prisma
-// (cung model, provider = "postgresql") - xem README "Database" section.
+// Schema nay MAP CHINH XAC sang cac bang snake_case tao boi
+// supabase/migrations/0001_init.sql (@@map/@map/@db.Uuid/@db.BigInt/
+// @db.Timestamptz). Dung de generate Prisma Client cho production:
+//   bun run db:generate:pg
 //
 // Chu y: giu String thay vi enum de code service dung chung
-// voi schema SQLite (SQLite khong ho tro enum)
+// voi schema SQLite (SQLite khong ho tro enum).
+// fileSize dung BigInt (SQL bigint). Service PHAI convert
+// Number(...) khi xuat DTO (JSON.stringify khong ho tro bigint).
 // =============================================================
 
 generator client {
@@ -20,30 +24,32 @@ datasource db {
 
 // ---- Tai khoan (map 1-1 voi Supabase Auth user) --------------
 model Profile {
-  id          String   @id // supabase user id (uuid) hoac "local-admin"
+  id          String   @id @db.Uuid // supabase user id (uuid)
   email       String   @unique
-  displayName String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  displayName String?  @map("display_name")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   favorites       Favorite[]
   readingProgress ReadingProgress[]
   readingHistory  ReadingHistory[]
+
+  @@map("profiles")
 }
 
 // ---- Truyện ---------------------------------------------------
 model Manga {
-  id                String    @id @default(uuid())
+  id                String    @id @default(uuid()) @db.Uuid
   title             String
-  alternativeTitles String? // danh sach tach boi dau phay
+  alternativeTitles String?   @map("alternative_titles")
   description       String?
   author            String?
   artist            String?
   status            String    @default("ONGOING") // ONGOING | COMPLETED | HIATUS | DROPPED
-  publicationYear   Int?
-  coverImageKey     String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  publicationYear   Int?      @map("publication_year")
+  coverImageKey     String?   @map("cover_image_key")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   chapters       Chapter[]
   genres         MangaGenre[]
@@ -56,87 +62,94 @@ model Manga {
   @@index([status])
   @@index([createdAt])
   @@index([updatedAt])
+  @@map("mangas")
 }
 
 // ---- Chương ---------------------------------------------------
 model Chapter {
-  id            String   @id @default(uuid())
-  mangaId       String
-  chapterNumber String // text de ho tro "5.5", "extra", "omake"...
+  id            String    @id @default(uuid()) @db.Uuid
+  mangaId       String    @map("manga_id") @db.Uuid
+  chapterNumber String    @map("chapter_number") // text de ho tro "5.5", "extra", "omake"...
   title         String?
   volume        String?
-  pageCount     Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  pageCount     Int       @default(0) @map("page_count")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  manga    Manga             @relation(fields: [mangaId], references: [id], onDelete: Cascade)
-  pages    Page[]
-  progress ReadingProgress[]
-  history  ReadingHistory[]
+  manga         Manga             @relation(fields: [mangaId], references: [id], onDelete: Cascade)
+  pages         Page[]
+  progress      ReadingProgress[]
+  history       ReadingHistory[]
   storageObjects StorageObject[]
 
   @@unique([mangaId, chapterNumber])
   @@index([mangaId])
+  @@map("chapters")
 }
 
 // ---- Trang truyện ----------------------------------------------
 model Page {
-  id         String   @id @default(uuid())
-  chapterId  String
-  pageNumber Int
-  objectKey  String   @unique // object key tren R2
-  fileName   String
-  mimeType   String
-  fileSize   Int // bytes
+  id         String   @id @default(uuid()) @db.Uuid
+  chapterId  String   @map("chapter_id") @db.Uuid
+  pageNumber Int      @map("page_number")
+  objectKey  String   @unique @map("object_key") // object key tren R2
+  fileName   String   @map("file_name")
+  mimeType   String   @map("mime_type")
+  fileSize   BigInt   @map("file_size") @db.BigInt // bytes
   width      Int?
   height     Int?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   chapter Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
 
   @@unique([chapterId, pageNumber])
   @@index([chapterId])
   @@index([objectKey])
+  @@map("pages")
 }
 
 // ---- Thể loại --------------------------------------------------
 model Genre {
-  id     String @id @default(uuid())
+  id     String @id @default(uuid()) @db.Uuid
   name   String @unique
   mangas MangaGenre[]
+
+  @@map("genres")
 }
 
 model MangaGenre {
-  mangaId String
-  genreId String
+  mangaId String @map("manga_id") @db.Uuid
+  genreId String @map("genre_id") @db.Uuid
   manga   Manga @relation(fields: [mangaId], references: [id], onDelete: Cascade)
   genre   Genre @relation(fields: [genreId], references: [id], onDelete: Cascade)
 
   @@id([mangaId, genreId])
   @@index([genreId])
+  @@map("manga_genres")
 }
 
 // ---- Yêu thích --------------------------------------------------
 model Favorite {
-  userId    String
-  mangaId   String
-  createdAt DateTime @default(now())
+  userId    String   @map("user_id") @db.Uuid
+  mangaId   String   @map("manga_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user  Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
   manga Manga   @relation(fields: [mangaId], references: [id], onDelete: Cascade)
 
   @@id([userId, mangaId])
   @@index([mangaId])
+  @@map("favorites")
 }
 
 // ---- Tiến độ đọc (1 row / user / manga) -------------------------
 model ReadingProgress {
-  userId         String
-  mangaId        String
-  chapterId      String
-  pageNumber     Int    @default(1)
-  scrollPosition Float  @default(0) // 0..1
-  updatedAt      DateTime @updatedAt
+  userId         String   @map("user_id") @db.Uuid
+  mangaId        String   @map("manga_id") @db.Uuid
+  chapterId      String   @map("chapter_id") @db.Uuid
+  pageNumber     Int      @default(1) @map("page_number")
+  scrollPosition Float    @default(0) @map("scroll_position") // 0..1
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user    Profile  @relation(fields: [userId], references: [id], onDelete: Cascade)
   manga   Manga    @relation(fields: [mangaId], references: [id], onDelete: Cascade)
@@ -145,16 +158,17 @@ model ReadingProgress {
   @@id([userId, mangaId])
   @@index([updatedAt])
   @@index([chapterId])
+  @@map("reading_progress")
 }
 
 // ---- Lịch sử đọc (1 row / user / chapter, update readAt) --------
 model ReadingHistory {
-  id         String   @id @default(uuid())
-  userId     String
-  mangaId    String
-  chapterId  String
-  pageNumber Int      @default(1)
-  readAt     DateTime @default(now())
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  mangaId    String   @map("manga_id") @db.Uuid
+  chapterId  String   @map("chapter_id") @db.Uuid
+  pageNumber Int      @default(1) @map("page_number")
+  readAt     DateTime @default(now()) @map("read_at") @db.Timestamptz(6)
 
   user    Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
   manga   Manga   @relation(fields: [mangaId], references: [id], onDelete: Cascade)
@@ -162,21 +176,22 @@ model ReadingHistory {
 
   @@unique([userId, chapterId])
   @@index([userId, readAt])
+  @@map("reading_history")
 }
 
 // ---- Metadata file tren R2 (theo doi upload & orphan cleanup) ---
 model StorageObject {
-  id          String    @id @default(uuid())
-  objectKey   String    @unique
+  id          String    @id @default(uuid()) @db.Uuid
+  objectKey   String    @unique @map("object_key")
   kind        String // PAGE | COVER
-  status      String    @default("PENDING") // PENDING | CONFIRMED
-  fileName    String?
-  fileSize    Int       @default(0)
-  mimeType    String?
-  mangaId     String?
-  chapterId   String?
-  createdAt   DateTime  @default(now())
-  confirmedAt DateTime?
+  status      String    @default("PENDING") // PENDING | CONFIRMED | DELETE_PENDING
+  fileName    String?   @map("file_name")
+  fileSize    BigInt    @default(0) @map("file_size") @db.BigInt
+  mimeType    String?   @map("mime_type")
+  mangaId     String?   @map("manga_id") @db.Uuid
+  chapterId   String?   @map("chapter_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  confirmedAt DateTime? @map("confirmed_at") @db.Timestamptz(6)
 
   manga   Manga?   @relation(fields: [mangaId], references: [id], onDelete: SetNull)
   chapter Chapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
@@ -184,4 +199,16 @@ model StorageObject {
   @@index([status, createdAt])
   @@index([mangaId])
   @@index([chapterId])
+  @@map("storage_objects")
+}
+
+// ---- Rate limit (DB-backed fixed window, han che brute force) ---
+model RateLimitHit {
+  key         String   @db.Text
+  windowStart DateTime @map("window_start") @db.Timestamptz(6)
+  count       Int      @default(0)
+
+  @@id([key, windowStart])
+  @@index([windowStart])
+  @@map("rate_limit_hits")
 }

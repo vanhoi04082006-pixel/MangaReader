@@ -1,15 +1,34 @@
 // POST /api/auth/refresh — lam moi session (Supabase refresh token)
+// Rate limit theo IP de chong hammer endpoint nay.
 import { NextRequest, NextResponse } from "next/server";
 import { ok, fail, withErrorHandling } from "@/lib/api";
-import { getEnv } from "@/lib/env";
-import { sbRefreshGrant } from "@/lib/supabase-auth";
-import { REFRESH_COOKIE, setAuthCookies, getSessionUser } from "@/lib/session";
+import { getEnv, isAdminUser } from "@/lib/env";
+import { sbRefreshGrant, sbRevokeSession } from "@/lib/supabase-auth";
+import { REFRESH_COOKIE, setAuthCookies, getSessionUser, invalidateSessionCache, ACCESS_COOKIE } from "@/lib/session";
+import { hitRateLimit, clientIp, RATE_LIMITS } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const POST = withErrorHandling(async (req: NextRequest) => {
   const env = getEnv();
+
+  // Rate limit refresh (chong hammer)
+  const rl = await hitRateLimit(
+    `refresh:${clientIp(req)}`,
+    RATE_LIMITS.refresh.limit,
+    RATE_LIMITS.refresh.windowMs
+  );
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Thao tác quá nhanh, vui lòng thử lại sau.", code: "rate_limited" },
+      { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
+    );
+  }
+
+  if (env.authProvider === null) {
+    return fail("Cấu hình xác thực không hợp lệ cho production.", 500, "config_invalid");
+  }
 
   if (env.authProvider === "local") {
     const user = await getSessionUser(req);
@@ -23,6 +42,21 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   }
 
   const session = await sbRefreshGrant(refreshToken);
+  const user = { id: session.user.id, email: session.user.email ?? "" };
+
+  // Session moi van phai la admin (chong truong hop admin bi thay doi cau hinh)
+  if (!isAdminUser(user)) {
+    // Refresh token cua tai khoan khac -> revoke session vua cap
+    await sbRevokeSession(session.access_token).catch(() => undefined);
+    return fail("Tài khoản này không được phép truy cập hệ thống.", 403, "forbidden_account");
+  }
+
+  // Xoa cache cua access token cu (neu co) de khong ton 2 entry
+  const oldAccess = req.cookies.get(ACCESS_COOKIE)?.value;
+  if (oldAccess && oldAccess !== session.access_token) {
+    invalidateSessionCache(oldAccess);
+  }
+
   const res = ok({
     refreshed: true,
     user: { id: session.user.id, email: session.user.email },

@@ -67,3 +67,6 @@ db/*.db-journal
 dev.log
 db/*.db
 db/*.db-journal
+
+# pasted content / temp uploads (khong commit)
+/upload/

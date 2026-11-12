@@ -37,7 +37,7 @@ async function rawFetch<T>(path: string, init?: FetchOptions): Promise<T> {
     if (refreshRes.ok) {
       return rawFetch<T>(path, { ...init, skipRefresh: true });
     }
-    window.dispatchEvent(new CustomEvent("tsundoku:unauthorized"));
+    window.dispatchEvent(new CustomEvent("mangareader:unauthorized"));
     throw new ApiClientError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.", 401, "unauthorized");
   }
 

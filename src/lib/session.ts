@@ -1,8 +1,11 @@
 // =============================================================
 // Session & Authentication (server)
 // - Supabase mode: access/refresh token trong httpOnly cookie
-// - Local mode: JWT HMAC tu sign (fallback khi khong dung Supabase)
-// API routes goi requireUser() de xac thuc moi request.
+// - Local mode: JWT HMAC tu sign (CHI development — production fail closed)
+// API routes goi requireUser()/requireAdmin() de xac thuc moi request.
+//
+// Cookie names (tsundoku_*) la identifier noi dai (persistent) —
+// giu nguyen de khong mat session nguoi dung da dang nhap.
 // =============================================================
 
 import crypto from "node:crypto";
@@ -58,8 +61,20 @@ function localJwtVerify(token: string, secret: string): Record<string, unknown> 
 }
 
 // ---------------- Cache xac minh token Supabase ---------------
-// Giam so lan goi mang: cache 90s theo hash cua token
-const verifyCache = new Map<string, { user: SessionUser; expiresAt: number }>();
+// Giam so lan goi mang: cache 90s theo hash cua token.
+// Cua so bao mat 90s la thoi diem toi da ma 1 token bi revoke
+// van co the duoc chap nhan (logout se xoa cache ngay).
+//
+// LUU KY THUAT: cache dat tren globalThis de TAT CA route bundle chia se
+// CUNG 1 instance (Turbopack dev co the tao instance rieng tung route —
+// neu de trong module scope, logout xoa cache route minh nhung route khac
+// van giu cache cu).
+const globalForCache = globalThis as unknown as {
+  __mrVerifyCache?: Map<string, { user: SessionUser; expiresAt: number }>;
+};
+const verifyCache: Map<string, { user: SessionUser; expiresAt: number }> =
+  globalForCache.__mrVerifyCache ?? new Map();
+globalForCache.__mrVerifyCache = verifyCache;
 const VERIFY_TTL_MS = 90_000;
 const VERIFY_CACHE_MAX = 500;
 
@@ -76,11 +91,17 @@ function cachePut(token: string, user: SessionUser) {
   verifyCache.set(cacheKey(token), { user, expiresAt: Date.now() + VERIFY_TTL_MS });
 }
 
+/** Xoa cache xac minh cua 1 token (goi khi logout / revoke). */
+export function invalidateSessionCache(token: string): void {
+  verifyCache.delete(cacheKey(token));
+}
+
 // ---------------- Session resolution --------------------------
 
 /**
  * Lay user tu request (cookie hoac Authorization: Bearer).
  * Tra ve null neu chua dang nhap. Throw SupabaseAuthError neu Supabase loi mang.
+ * LUU Y: provider = null (cau hinh local trong production) -> tra ve null (fail closed).
  */
 export async function getSessionUser(req: NextRequest): Promise<SessionUser | null> {
   const env = getEnv();
@@ -88,6 +109,11 @@ export async function getSessionUser(req: NextRequest): Promise<SessionUser | nu
   const bearer = authHeader.toLowerCase().startsWith("bearer ")
     ? authHeader.slice(7).trim()
     : null;
+
+  if (env.authProvider === null) {
+    // Cau hinh khong hop le (vd AUTH_PROVIDER=local trong production) — fail closed.
+    return null;
+  }
 
   if (env.authProvider === "supabase") {
     const token = bearer ?? req.cookies.get(ACCESS_COOKIE)?.value ?? null;
@@ -105,7 +131,7 @@ export async function getSessionUser(req: NextRequest): Promise<SessionUser | nu
     return sessionUser;
   }
 
-  // local mode
+  // local mode (chi development)
   const token = bearer ?? req.cookies.get(LOCAL_COOKIE)?.value ?? null;
   if (!token || !env.authSecret) return null;
   const payload = localJwtVerify(token, env.authSecret);
@@ -167,10 +193,11 @@ export function clearAuthCookies(res: NextResponse) {
 
 export { localJwtSign };
 
-// ---------------- Local login (fallback provider) --------------
+// ---------------- Local login (fallback provider — dev only) --
 
 export function verifyLocalCredentials(email: string, password: string): SessionUser | null {
   const env = getEnv();
+  if (env.authProvider !== "local") return null; // chi dung khi provider = local (dev)
   if (!env.admin.email || !env.admin.password) return null;
   const emailOk = email.trim().toLowerCase() === env.admin.email.trim().toLowerCase();
   const a = Buffer.from(password, "utf8");

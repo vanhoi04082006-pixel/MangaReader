@@ -38,8 +38,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
     const onUnauthorized = () => {
       useAuthStore.getState().forceUnauthenticated();
     };
-    window.addEventListener("tsundoku:unauthorized", onUnauthorized);
-    return () => window.removeEventListener("tsundoku:unauthorized", onUnauthorized);
+    window.addEventListener("mangareader:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("mangareader:unauthorized", onUnauthorized);
   }, []);
 
   return (

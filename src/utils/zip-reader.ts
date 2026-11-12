@@ -34,6 +34,12 @@ const LFH_SIG = 0x04034b50;
 
 const TAIL_SCAN_SIZE = 66_000; // EOCD(22) + max comment(65535) + dư
 
+/** Gioi han so entry anh toi da cho 1 lan upload (khop schema finalize). */
+export const MAX_ZIP_IMAGE_ENTRIES = 3000;
+
+/** Gioi han kich thuoc giai nen 1 entry — chong decompression bomb. */
+export const MAX_ENTRY_UNCOMPRESSED = 100 * 1024 * 1024; // 100MB
+
 async function readSlice(file: File, start: number, end: number): Promise<DataView> {
   const buf = await file.slice(start, Math.min(end, file.size)).arrayBuffer();
   return new DataView(buf);
@@ -96,6 +102,11 @@ export async function readZipIndex(file: File): Promise<ZipEntryInfo[]> {
   if (cdOffset + cdSize > file.size) {
     throw new ZipParseError("Central Directory vượt khỏi file — ZIP có thể bị hỏng.");
   }
+  if (totalEntries > 100_000) {
+    throw new ZipParseError(
+      `Số lượng tập tin trong ZIP quá lớn (${totalEntries}) — từ chối xử lý.`
+    );
+  }
 
   const cd = await readSlice(file, cdOffset, cdOffset + cdSize);
   const decoder = new TextDecoder("utf-8");
@@ -157,8 +168,17 @@ export async function readZipIndex(file: File): Promise<ZipEntryInfo[]> {
 
 /**
  * Giai nen 1 entry (chi giu 1 anh trong RAM tai 1 thoi diem).
+ * Kiem tra bounds truoc khi doc de tranh RangeError/logical bug.
  */
 export async function extractZipEntry(file: File, entry: ZipEntryInfo): Promise<Blob> {
+  if (entry.localOffset < 0 || entry.localOffset + 30 > file.size) {
+    throw new ZipParseError(`Offset tập tin không hợp lệ: ${entry.name}`);
+  }
+  if (entry.uncompressedSize > MAX_ENTRY_UNCOMPRESSED) {
+    throw new ZipParseError(
+      `Tập tin giải nén quá lớn (${(entry.uncompressedSize / 1024 / 1024) | 0}MB): ${entry.name}`
+    );
+  }
   const lfh = await readSlice(file, entry.localOffset, entry.localOffset + 30);
   if (u32(lfh, 0) !== LFH_SIG) {
     throw new ZipParseError(`Local header không hợp lệ cho tập tin: ${entry.name}`);
@@ -168,7 +188,7 @@ export async function extractZipEntry(file: File, entry: ZipEntryInfo): Promise<
   const dataStart = entry.localOffset + 30 + nameLen + extraLen;
   const dataEnd = dataStart + entry.compressedSize;
 
-  if (dataEnd > file.size) {
+  if (dataStart > file.size || dataEnd > file.size) {
     throw new ZipParseError(`Dữ liệu tập tin vượt khỏi file: ${entry.name}`);
   }
 
@@ -188,12 +208,14 @@ export async function extractZipEntry(file: File, entry: ZipEntryInfo): Promise<
   throw new ZipParseError(`Phương thức nén không được hỗ trợ (${entry.method}): ${entry.name}`);
 }
 
-/** Loc entry anh hop le + loai bo file he thong khong can thiet */
+/** Loc entry anh hop le + loai bo file he thong khong can thiet
+ *  + gioi han so luong (MAX_ZIP_IMAGE_ENTRIES) + chong bomb (size). */
 export function filterImageEntries(
   entries: ZipEntryInfo[]
-): { valid: ZipEntryInfo[]; skipped: string[] } {
+): { valid: ZipEntryInfo[]; skipped: string[]; overflowed: boolean } {
   const valid: ZipEntryInfo[] = [];
   const skipped: string[] = [];
+  let overflowed = false;
   for (const e of entries) {
     const lower = e.name.toLowerCase();
     if (
@@ -205,10 +227,20 @@ export function filterImageEntries(
       continue;
     }
     if (/\.(jpe?g|png|webp|avif|gif)$/.test(lower)) {
+      // Chong decompression bomb: entry giai nen > 100MB -> bo qua
+      if (e.uncompressedSize > MAX_ENTRY_UNCOMPRESSED) {
+        skipped.push(e.name);
+        continue;
+      }
+      if (valid.length >= MAX_ZIP_IMAGE_ENTRIES) {
+        overflowed = true;
+        skipped.push(e.name);
+        continue;
+      }
       valid.push(e);
     } else {
       skipped.push(e.name);
     }
   }
-  return { valid, skipped };
+  return { valid, skipped, overflowed };
 }

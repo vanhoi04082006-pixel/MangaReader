@@ -345,7 +345,7 @@ export function UploadView() {
       setParsing(true);
       try {
         const entries = await readZipIndex(file);
-        const { valid, skipped: skippedNames } = filterImageEntries(entries);
+        const { valid, skipped: skippedNames, overflowed } = filterImageEntries(entries);
         const sorted = naturalSortFiles(valid, (e: ZipEntryInfo) => e.name);
         const next: PageItem[] = [];
         let skipped = skippedNames.length;
@@ -377,6 +377,11 @@ export function UploadView() {
           setParseError(`Quá nhiều trang (${next.length}). Tối đa ${MAX_PAGES} trang mỗi chương.`);
           applyItems([], file.name, skipped);
           return;
+        }
+        if (overflowed) {
+          setParseError(
+            `ZIP chứa quá ${MAX_PAGES} ảnh hợp lệ — chỉ giữ ${MAX_PAGES} trang đầu, phần còn lại bị bỏ qua.`
+          );
         }
         applyItems(next, file.name, skipped);
       } catch (err) {

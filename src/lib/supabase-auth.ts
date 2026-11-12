@@ -146,20 +146,34 @@ export async function sbAdminCreateUser(
   return { id: data.id, email: data.email };
 }
 
-/** Revoke refresh token (logout) — best effort */
-export async function sbRevokeToken(refreshToken: string): Promise<void> {
+/**
+ * Revoke session (logout) — POST /auth/v1/logout.
+ *
+ * Semantics Supabase Auth: endpoint nay revoke SESSION ma ACCESS TOKEN
+ * truyen o header Authorization thuoc ve (kem moi refresh token sinh tu
+ * session do). Truoc day code truyen publishable key lam Bearer -> Supabase
+ * khong revoke dung session (loi 401 im lang). Phai dung access token cua user.
+ */
+export async function sbRevokeSession(accessToken: string): Promise<boolean> {
   try {
     const env = getEnv();
-    await fetch(`${env.supabase.url}/auth/v1/logout`, {
+    const res = await fetch(`${env.supabase.url}/auth/v1/logout`, {
       method: "POST",
       headers: {
         apikey: env.supabase.publishableKey ?? "",
-        Authorization: `Bearer ${env.supabase.publishableKey ?? ""}`,
+        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    }).catch(() => undefined);
-  } catch {
-    // best-effort
+      body: JSON.stringify({}),
+      cache: "no-store",
+    });
+    // 204 = revoked. 401/403 = token da het han/da revoke (van coi nhu da ket thuc).
+    if (res.status === 204 || res.ok) return true;
+    if (res.status === 401 || res.status === 403) return true;
+    console.error("[supabase-auth] logout revoke failed:", res.status, await res.text().catch(() => ""));
+    return false;
+  } catch (err) {
+    console.error("[supabase-auth] logout revoke network error:", err);
+    return false;
   }
 }
