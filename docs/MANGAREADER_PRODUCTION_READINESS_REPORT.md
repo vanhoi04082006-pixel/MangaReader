@@ -2,26 +2,27 @@
 
 - **Ngày audit (lượt 1)**: 2026-11-12 — commit `ce8651ff7d07c101904e0cb9e7f1851016ceb1a4`
 - **Ngày rà soát độc lập (lượt 2)**: 2026-11-12 — commit `4346b1aa604052430b1ba3dd210ae07ad5380c9c`
-- **Ngày rà soát cuối (lượt 3 — API key & session security)**: 2026-11-12 — commit mới nhất trên `audit/mangareader-production-hardening` (xem §9 cuối báo cáo)
+- **Ngày rà soát cuối (lượt 3 — API key & session security)**: 2026-11-12 — commit `2fcd223a9e802a7147bbce93272736d677349f3d`
+- **Ngày rà soát residual (lượt 4 — final residual security review)**: 2026-11-12 — commit mới nhất trên `audit/mangareader-production-hardening` (xem §10 cuối báo cáo)
 - **Branch**: `audit/mangareader-production-hardening` (tách từ main `18bd3ee3702d82f8f7d83c252603caf71723ba87`)
 - **Repository**: `https://github.com/vanhoi04082006-pixel/MangaReader` (giữ nguyên private + history — xem `docs/MANGAREADER_RENAME_REPORT.md`)
-- **Phạm vi thay đổi so với main `18bd3ee`**: số liệu `git diff --stat` thực tế được ghi lại ở §9 (lượt 1 ghi 57 file/+1591 là số liệu giữa chừng, đã hiệu chỉnh lượt 2). Lượt 2 thay đổi 21 file, +1629/−141 so với `ce8651f`; lượt 3 thay đổi 14 file so với `4346b1a` (chi tiết §9).
+- **Phạm vi thay đổi so với main `18bd3ee`**: số liệu `git diff --stat` thực tế được ghi lại ở §9 (lượt 1 ghi 57 file/+1591 là số liệu giữa chừng, đã hiệu chỉnh lượt 2). Lượt 2 thay đổi 21 file, +1629/−141 so với `ce8651f`; lượt 3 thay đổi 14 file so với `4346b1a`; lượt 4 thay đổi 8 file so với `2fcd223` (chi tiết §9 và §10).
 - Không redesign UI, không viết lại module đang chạy đúng, không xóa tính năng, không reset dữ liệu, không xóa object R2 thật nào trong quá trình kiểm thử. `main` không bị thay đổi.
 
 ---
 
 ## 1. Executive Summary
 
-**Trạng thái tổng thể: SẴN SÀNG VỀ MÃ NGUỒN — CÒN BƯỚC BÊN NGOÀI (BLOCKED) trước khi Production Ready**. Lượt 3 (rà soát cuối, tập trung API key & session security) sửa 4 vấn đề của lượt trước — quan trọng nhất: **hợp đồng header cho key Supabase thế hệ mới** (`sb_publishable_`/`sb_secret_` không phải JWT — không được gửi làm Bearer) và **xác minh session uy quyền** (`auth.sessions`) cho thao tác phá hủy — cùng 2 vấn đề vận hành (đường dẫn SQLite trên Windows, cleanup của script verify-rls). Bộ test nâng lên **114 test (60 unit + 54 integration), tất cả PASS trên môi trường thật** (SQLite + Supabase Auth thật + R2 thật, chạy `bun test tests/` một lần — đã sửa lỗi rò rỉ env giữa các file test).
+**Trạng thái tổng thể: SẴN SÀNG VỀ MÃ NGUỒN — CÒN BƯỚC BÊN NGOÀI (BLOCKED) trước khi Production Ready**. Lượt 3 (rà soát cuối, tập trung API key & session security) sửa 4 vấn đề của lượt trước. **Lượt 4 (rà soát residual theo phản hồi độc lập trên GitHub commit `2fcd223a`) sửa 2 lỗ hổng còn sót**: (1) **mọi thao tác xóa object R2 phải dùng Strict Session Guard** — không theo HTTP method (DELETE clearPages, finalizePages B4 xóa object bị thay thế, setMangaCover xóa bia cũ qua 2 endpoint POST, uploads/abort xóa object PENDING); (2) **verify-rls kiểm tra `storage_objects` có nguy cơ PASS giả** trên bảng rống ngay sau migration — nay seed mẫu thật bằng service key + kiểm tra UPDATE/DELETE + cleanup. Bộ test nâng lên **120 test (65 unit + 55 integration), tất cả PASS trên môi trường thật** (SQLite + Supabase Auth thật + R2 thật, chạy `bun test tests/` một lần).
 
-### Tóm tắt 3 lượt
+### Tóm tắt 4 lượt
 
-| Mức | Lượt 1 (đã sửa) | Lượt 2 phát hiện thêm | Lượt 3 phát hiện thêm | Lượt 3 đã sửa |
-|---|---|---|---|---|
-| CRITICAL | 5 | 1 (ADMIN_USER_ID không bắt buộc) | 1 (key Supabase mới sb_* vẫn gửi làm Bearer — sai hợp đồng tài liệu) | 1 |
-| HIGH | 7 | 3 (logout access hết hạn; ADMIN_PASSWORD readiness; proxy stream 100MB) | 2 (session revoked chưa kiểm auth.sessions uy quyền; migration resolve SQLite theo CWD — Windows mở sai file) | 2 |
-| MEDIUM | 6 (5 sửa, 1 BLOCKED) | 1 (thiếu tool chuyển dữ liệu) | 1 (verify-rls process.exit bỏ qua cleanup) | 1 |
-| LOW | 4 | 1 (verify-rls apikey/bearer lẫn) | 1 (rò rỉ env giữa các file test khi `bun test tests/`) | 1 |
+| Mức | Lượt 1 (đã sửa) | Lượt 2 phát hiện thêm | Lượt 3 phát hiện thêm | Lượt 4 phát hiện thêm | Lượt 4 đã sửa |
+|---|---|---|---|---|---|
+| CRITICAL | 5 | 1 (ADMIN_USER_ID không bắt buộc) | 1 (key Supabase mới sb_* vẫn gửi làm Bearer — sai hợp đồng tài liệu) | 0 | 0 |
+| HIGH | 7 | 3 (logout access hết hạn; ADMIN_PASSWORD readiness; proxy stream 100MB) | 2 (session revoked chưa kiểm auth.sessions uy quyền; migration resolve SQLite theo CWD — Windows mở sai file) | 2 (guard lỗ: 5 route xóa R2 dùng mutation guard 90s; verify-rls storage_objects PASS giả trên bảng rống) | 2 |
+| MEDIUM | 6 (5 sửa, 1 BLOCKED) | 1 (thiếu tool chuyển dữ liệu) | 1 (verify-rls process.exit bỏ qua cleanup) | 1 (cleanup coi 404 “không có gì xóa” là LỖI — real-run FAIL giả khi RLS lành mạnh) | 1 |
+| LOW | 4 | 1 (verify-rls apikey/bearer lẫn) | 1 (rò rỉ env giữa các file test khi `bun test tests/`) | 1 (`.env` bị treo trên user admin tạm đã xóa sau lượt 3 — operational, phát hiện khi chạy lại suite) | 1 |
 
 **BLOCKED (ngoài tầm môi trường này — cần chủ sở hữu)**: áp `0001_init.sql` cho Supabase production DB → sau đó chạy `bun run verify:rls` (Phase A kiểm tra key đã PASS thật ngay bây giờ — xem S23; phần RLS cần bảng) và `bun run db:migrate:sqlite-to-postgres --apply` (2 script tự chặn an toàn khi migration chưa áp).
 
@@ -45,7 +46,7 @@
 | Session security & logout revocation | **PASS** [IT + cross-runtime] | 6 kịch bản logout thật (lượt 2) + **lượt 3: replay access token trong TIỂN TRÌNH BUN RIÊNG (heap/globalThis riêng) sau logout → bị Supabase từ chối (401/403) — chứng minh revocation là SERVER-SIDE, không phải cache local**; token revoked → DELETE manga/cleanup/mutation thường đều 401; JWT rác 401; RT đã tiêu thụ → refresh 400/401; session đang sống → mutation 201 (test 8b.0–8b.6) | auth.sessions runtime check = BLOCKED (cần DATABASE_URL PostgreSQL — xem S24) |
 | CSRF | **PASS** [UT+IT] | Origin cross-site 403, thiếu Origin/Referer 403, Referer giả 403, same-origin qua; Sec-Fetch-Site chặn; presigned PUT không ảnh hưởng | Không |
 | Rate limiting | **PASS** [IT] | Brute-force → 429; DB-backed (SQLite/PG) — Vercel-compatible; fail-open có log khi DB lỗi | Không |
-| RLS | **Phase A PASS / Phase C BLOCKED** [IT thật + BL] | Phase A (không cần bảng) chạy thật: key hợp lệ PASS, key sai 401, JWT rác bị từ chối. Phase C (cần bảng): `mangas` chưa tồn tại (PGRST205) → script thoát 2 (BLOCKED) với hướng dẫn, KHÔNG đánh giá RLS trên bảng không tồn tại, KHÔNG coi lỗi gateway 401 là bằng chứng RLS | **Chủ sở hữu chạy 0001_init.sql rồi chạy verify:rls** |
+| RLS | **Phase A PASS / Phase C BLOCKED** [IT thật + BL] | Phase A (không cần bảng) chạy thật: key hợp lệ PASS, key sai 401, JWT rác bị từ chối. Phase C (cần bảng): `mangas` chưa tồn tại (PGRST205) → script thoát 2 (BLOCKED) với hướng dẫn, KHÔNG đánh giá RLS trên bảng không tồn tại, KHÔNG coi lỗi gateway 401 là bằng chứng RLS. **Lượt 4: Phase C7 được thiết kế lại** — seed mẫu thật `storage_objects` bằng service key + đọc lại chứng minh bảng không rống + kiểm tra UPDATE/DELETE trên dòng seed (chống PASS giả — xem S29) | **Chủ sở hữu chạy 0001_init.sql rồi chạy verify:rls** |
 | Database schema (SQLite) | **PASS** [IT] | `db push` additive; dữ liệu dev cũ nguyên vẹn (One Piece 1 chương/5 trang) | Không |
 | **Đường dẫn SQLite (Windows/CWD)** | **PASS** [UT+IT] | 13 unit test (tương đối/tuyệt đối/Windows 2 kiểu/UNC/query param/thiếu file — KHÔNG tự tạo file); dry-run chạy thật từ repo root + từ CWD khác → mở ĐÚNG cùng một file (resolve theo thư mục schema, giống Prisma); file thiếu → lỗi rõ ràng exit 1 (S25) | Kiểm trên Windows thật (không có máy Windows trong môi trường này — logic đã unit-test đầy đủ) |
 | PostgreSQL migration (schema) | **PASS** [SR] + **[BL]** áp thật | `schema.postgres.prisma` map 1-1 SQL 0001 (12 bảng); `prisma validate`/generate OK | Áp thật = BLOCKED |
@@ -54,10 +55,11 @@
 | Upload proxy (cap 4MB khi stream) | **PASS** [IT] | 8 test thật: đúng bằng cap 4MB → 200; khai báo nhỏ + body vượt cap → **413 proxy_too_large ngay khi vượt 4MB + KHÔNG có object trên R2 (finalize → r2_verify_failed)**; key CONFIRMED → 409 not_pending; stream đứt giữa chừng → không tạo object; không Content-Length → 200 (đếm byte thật); MIME sai 400; key lạ 400 | Không |
 | ZIP security | **PASS** [UT] | Chặn entry giải nén >100MB, 3000 entry, lọc file hệ thống | Không |
 | Data integrity (DB↔R2) | **PASS** [IT] | Finalize sai kích thước bị chặn (DB + HeadObject); xóa truyện đồng bộ R2; abort không xóa CONFIRMED; DELETE_PENDING retry | Không |
-| **Cleanup của script verify-rls** | **PASS** [UT] | 7 unit test với fetch mock: grant fail / RLS assertion fail / cleanup lỗi / thiếu env — cleanup LUÔN chạy, chỉ xóa ID do script tạo, exit code trả sau cleanup (S26) | Chạy thật toàn bộ Phase C cần bảng (BLOCKED) |
+| **Strict Session Guard cho thao tác xóa R2 (guard matrix)** | **PASS** [UT+IT] | **Lượt 4**: 9 handler có xóa object R2/phá hoi dữ liệu thật đều dùng `requireAdminDestructive` (xác minh session trực tiếp + auth.sessions, không qua cache 90s) bất kể HTTP method — kể cả POST (finalize B4, 2 endpoint setMangaCover, uploads/abort). 10 handler chỉ đọc/ghi metadata không xóa R2 giữ `requireAdminMutation` (chấp nhận cửa sổ 90s, phân loại ở §10.3). Unit test guard matrix khoá cứng ma trận; integration 8b.5b chứng minh runtime: token đã revoke → 401 trên cả 4 route mới nâng guard | Không |
+| **Cleanup của script verify-rls** | **PASS** [UT] | 10 unit test với fetch mock: grant fail / RLS assertion fail / cleanup lỗi / thiếu env / **lượt 4: seed fail + RLS hong storage_objects (leak doc/sửa/xóa)** — cleanup LUÔN chạy, chỉ xóa ID do script tạo, exit code trả sau cleanup (S26); **lượt 4: cleanup hiểu đúng 404 = “không có gì xóa”** cho tài nguyên chưa từng tồn tại (S30) | Chạy thật toàn bộ Phase C cần bảng (BLOCKED) |
 | Vercel compatibility | **PASS** [SR+IT] | `bun run build` thành công; proxy giới hạn 4MB < 4.5MB body Vercel; rate limit DB-backed | Deploy thật do chủ sở hữu |
 | Performance | **PASS** [SR + đo nhẹ] | Index/phân trang/lazy-load (xem lượt 1 §6) | Benchmark 100k trang chưa chạy |
-| Testing | **PASS** | **114/114 test** (60 unit + 54 integration) chạy `bun test tests/` MỘT LẦN trên môi trường thật (đã sửa rò rỉ env giữa file test — S27); `bun run lint` sạch; `bun run typecheck` 0 lỗi; `bun run build` OK | Không |
+| Testing | **PASS** | **120/120 test** (65 unit + 55 integration) chạy `bun test tests/` MỘT LẦN trên môi trường thật; `bun run lint` sạch; `bun run typecheck` 0 lỗi; `bun run build` OK | Không |
 | Secrets | **PASS** [SR] | Không secret trong diff; `.env` ignored; tool artifact đã loại khỏi commit | Chủ sở hữu xoay vòng token đã lộ (khuyến nghị) |
 
 ---
@@ -192,9 +194,56 @@ PG schema map, CSRF, safe-delete, db push flag, health tách public/internal, sc
 - **Test [UT]** (7 test với fetch mock — bao phủ đúng các kịch bản yêu cầu): happy path exit 0 + cleanup xóa user/manga; **header contract** (không request nào gửi key mới làm Bearer; request user có Bearer access token); PK sai → exit 2 + **không tạo tài nguyên nào**; bảng thiếu → exit 2 + không tạo user; **password grant fail (sau khi tạo user) → exit 1 + cleanup VẪN xóa user tạm**; RLS assertion fail → exit 1 + cleanup xóa đủ (user + seed + attempted IDs, chỉ xóa ID dài do script sinh); cleanup lỗi (DELETE 500) → exit 1; thiếu env → exit 2 + không gọi mạng.
 
 ### S27 — LOW · Rò rỉ biến env giữa các file test khi chạy `bun test tests/` (fixed)
+
 - **File**: `tests/unit.test.ts`
 - **Root cause**: bun chạy nhiều file test trong **cùng một process** (load file → chạy → load file kế tiếp). Các unit test lượt 1–2 chỉnh `process.env` (đặt `ADMIN_EMAIL`, xóa `ADMIN_PASSWORD`, đổi `NODE_ENV`...) và **không hoàn nguyên** — file integration load sau nhận env bẩn. Triệu chứng thật: chạy `bun test tests/` → toàn bộ integration fail giả (403 forbidden_account vì ADMIN_EMAIL bị unit test ghi đè); chạy riêng từng file thì PASS — lỗi tiềm ẩn từ lượt 2 không ai để ý.
-- **Fix**: snapshot `process.env` khi load file unit + `afterAll` hoàn nguyên nguyên trạng. Bằng chứng: `bun test tests/` một lệnh → **114/114 PASS**.
+- **Fix**: snapshot `process.env` khi load file unit + `afterAll` hoàn nguyên nguyên trạng. Bằng chứng: `bun test tests/` một lệnh → toàn bộ suite PASS (114 tại lượt 3, 120 tại lượt 4).
+
+## 3D. Security Findings lượt 4 (final residual — theo phản hồi độc lập trên GitHub `2fcd223a`)
+
+### S28 — HIGH · 5 route có xóa object R2 vẫn dùng mutation guard (cửa sổ cache 90s sau logout) (fixed)
+
+**Vấn đề** (phát hiện bởi phản hồi độc lập của chủ sở hữu trên commit `2fcd223a`): `DELETE /api/chapters/:id/pages` (clearPages — xóa TOÀN BỘ trang của chương trên DB + R2) vẫn dùng `requireAdminMutation` — guard chỉ dựa cache xác thực 90s. Cùng lớp lỗ hổng trên 4 route khác có xóa R2 nhưng dùng HTTP POST:
+
+| Route | Handler | Phá hủy thực tế | Trước lượt 4 |
+|---|---|---|---|
+| `chapters/[id]/pages` | DELETE (clearPages) | Xóa toàn bộ trang DB + R2 | `requireAdminMutation` ✗ |
+| `chapters/[id]/pages` | POST (finalizePages) | B4 safe-delete object R2 của trang bị thay thế | `requireAdminMutation` ✗ |
+| `mangas/[id]/cover` | POST (setMangaCover) | Xóa object bìa cũ trên R2 | `requireAdminMutation` ✗ |
+| `mangas/[id]/cover/from-page` | POST (setMangaCover) | Xóa object bìa cũ trên R2 | `requireAdminMutation` ✗ |
+| `uploads/abort` | POST (safe-delete) | Xóa object PENDING trên R2 | `requireAdminMutation` ✗ |
+
+Hệ quả: token đã logout vẫn có thể thực thi các thao tác này tối đa 90s trên runtime instance khác (cache `getSessionUser`). Đây là dạng “phá hủy dữ liệu thật qua method không DELETE” — nguyên tắc phân loại guard phải theo **hành vi phá hủy**, không theo HTTP method.
+
+**Đã sửa**: cả 5 handler chuyển sang `requireAdminDestructive` (Strict Session Guard: CSRF + admin + `GET /auth/v1/user` trực tiếp + đối chiếu `auth.sessions` — fail closed). GET/POST giữ nguyên đúng phân loại. Khóa bằng:
+- **Unit test guard matrix** (`tests/unit.test.ts` — “PASS 4 — Admin guard matrix”): 9 handler phá hủy bắt buộc `requireAdminDestructive` + cấm `requireAdminMutation`; 10 handler metadata-only giữ `requireAdminMutation` (đọc nguồn route, tự động phát hiện regressions khi thêm/sửa route).
+- **Integration 8b.5b**: token đã revoke → cả 4 route mới nâng guard trả 401 ngay (chạy thật trên dev server + Supabase thật).
+
+### S29 — HIGH · verify-rls: kiểm tra RLS `storage_objects` có nguy cơ PASS giả trên bảng rống (fixed)
+
+**Vấn đề** (phát hiện bởi phản hồi độc lập): `isReadDenied()` coi `200 []` là “bị RLS chặn”. Nhưng `storage_objects` rống ngay sau khi áp SQL migration (dữ liệu SQLite→PostgreSQL chưa nap). Khi bảng rống: RLS lành mạnh → `200 []`; **RLS bị tắt/cho phép tất** → cũng có thể `200 []`. Check cũ không chứng minh được non-admin bị chặn thật.
+
+**Đã sửa** (thiết kế lại Phase C7 của `scripts/verify-rls.ts`):
+1. **Seed mẫu thật** bằng service key (row COVER PENDING gắn manga seed, id UUID riêng) — thất bại → VerifyError exit 1, không chạy tiếp.
+2. **C7a**: service key đọc lại dòng seed — chứng minh bảng CÓ dữ liệu tại thời điểm kiểm tra (đọc không ra → throw, mọi check sau vô nghĩa).
+3. **C7b**: non-admin GET theo id seed — `200 []` giờ là “RLS lọc dòng ĐANG TỒN TẢI”; response chứa id seed → RLS hỏng → FAIL.
+4. **C7c**: non-admin PATCH vào dòng seed — phải 0 row ảnh hưởng + `file_name` nguyên vẹn (đọc lại bằng service key).
+5. **C7d**: non-admin DELETE dòng seed — phải 0 row ảnh hưởng + dòng vẫn tồn tại.
+6. **Cleanup**: xóa dòng seed theo id trong `finally` (xóa trước manga seed — quan hệ con-cha); 404 khi dọn dòng seed được báo rõ (dòng “biến mất giữa chương trình” — khả năng cao do check C7 DELETE đã FAIL và xóa thật).
+- `app_config` không cần seed: migration đã `insert ... on conflict do nothing` dòng `admin_user_id` — bảng không thể rống (ghi chú trong script).
+- Unit test mock thêm 2 chế độ: `rls-storage-leak` (non-admin doc/sửa/xóa được dòng seed → exit 1, không PASS giả) và `storage-seed-fails` (service key không ghi được → exit 1 + cleanup vẫn chạy).
+
+### S30 — MEDIUM · verify-rls cleanup: 404 “không có gì xóa” bị coi là LỖI → real-run FAIL giả (fixed)
+
+**Vấn đề**: cleanup xóa “tài nguyên đã THỬ insert” (attempted manga/app_config) yêu cầu 200/204. Trên PostgREST thật, DELETE ảnh hưởng 0 row trả **404**. Khi RLS lành mạnh (INSERT bị chặn đúng như dự kiến → row không từng tồn tại), cleanup nhận 404 → báo `CLEANUP KHÔNG HOÀN TẤT` → exit 1 **dù mọi check PASS** — FAIL giả trên chính hệ thống đang bảo vệ tốt. (Unit test lượt 3 không phát hiện vì mock trả `200 []` cho mọi DELETE.)
+
+**Đã sửa**: cleanup hiểu 404 = “không có gì phải xóa” cho tài nguyên attempted (log rõ ràng); các tài nguyên seed (manga, storage) vẫn nghiêm ngặt (200/204) — 404 ở đó có nghĩa dòng đã biến mất giữa chương trình (báo LỖI kèm hướng dẫn). Giữ nguyên tinh thần “cleanup lỗi là có tiếng” nhưng không còn FAIL giả.
+
+### S31 — LOW · `.env` bị treo trên user admin tạm đã xóa (operational — fixed trong phiên này)
+
+**Vấn đề** (phát hiện khi chạy lại suite lượt 4): lượt 3 chạy integration với **tài khoản admin tạm** rồi xóa user đó khỏi Supabase — nhưng `.env` vẫn trỏ `ADMIN_EMAIL`/`ADMIN_USER_ID` vào user đã xóa. Lượt 4 gặp phải: password grant 401 invalid_credentials → 33 test fail giả (không phải lỗi mã nguồn). Unit test mock không thể phát hiện (không đụng `.env` thật).
+
+**Đã sửa**: tạo lại user admin tạm mới (email `mangareader-itest-admin+<ts>@example.com`, UUID mới, cùng quy ước lượt 3), cập nhật đồng bộ 3 giá trị `.env` (EMAIL + USER_ID + PASSWORD), xác nhận grant 200 trước khi chạy suite. **Lưu ý vòng đời**: user tạm này còn sống và `.env` đang nhất quán — chủ sở hữu khi tái chạy integration cần hoặc giữ nó, hoặc tạo mới + cập nhật `.env` (không bao giờ để `.env` trỏ vào user đã xóa; tài khoản thật `admin@manga.vn` UUID `7228d6e8-…` không bị ảnh hưởng).
 
 
 ---
@@ -276,5 +325,80 @@ PG schema map, CSRF, safe-delete, db push flag, health tách public/internal, sc
 **NOT YET PRODUCTION READY — EXTERNAL BLOCKERS REMAIN** (giữ nguyên kết luận của lượt 2, không tuyên bố PRODUCTION READY khi migration PostgreSQL, verify RLS (Phase C) và deploy Vercel còn blocked — §7).
 
 Mã nguồn giờ **tuân thủ hợp đồng API key Supabase hiện hành** (cả 2 thế hệ key), revocation session có **định nghĩa enforcement chính xác + bằng chứng cross-runtime**, migration tool đọc **đúng DB nguồn trên mọi nền tảng/CWD**, và verify-rls **luôn dọn tài nguyên test của chính nó**.
+
+*Không có dữ liệu thật nào bị reset; không object R2 nào của dữ liệu thật bị xóa; tài khoản admin thật không bị thay đổi; `main` vẫn ở `18bd3ee`.*
+
+## 10. Kết quả lượt 4 (final residual security review)
+
+Nguồn: phản hồi rà soát độc lập của chủ sở hữu trên GitHub commit `2fcd223a` (2 vấn đề bắt buộc sửa trước merge + yêu cầu rà soát các thao tác xóa dữ liệu khác + phân loại rõ cửa sổ 90s).
+
+### 10.1 Nhận diện & sửa
+
+| # | Mức | Vấn đề | Trạng thái |
+|---|---|---|---|
+| S28 | HIGH | 5 route xóa object R2 dùng `requireAdminMutation` (cửa sổ cache 90s sau logout) — kể cả `DELETE clearPages` và 4 endpoint POST có xóa R2 (finalize B4, 2× setMangaCover, uploads/abort) | **FIXED** — cả 5 chuyển sang `requireAdminDestructive`; khoá bằng unit guard matrix + integration 8b.5b |
+| S29 | HIGH | verify-rls check `storage_objects` PASS giả trên bảng rống (isReadDenied coi `200 []` là bị chặn — đúng khi bảng rống dù RLS hỏng) | **FIXED** — seed mẫu thật bằng service key + đọc lại (C7a) + non-admin không thấy dòng seed (C7b) + PATCH/DELETE 0 row + nguyên vẹn (C7c/C7d) + cleanup trong finally |
+| S30 | MEDIUM | verify-rls cleanup coi 404 “0 row bị xóa” là LỖI → real-run FAIL giả khi RLS lành mạnh (PostgREST DELETE 0 row = 404) | **FIXED** — 404 = “không có gì xóa” cho tài nguyên attempted; seed vẫn nghiêm ngặt |
+| S31 | LOW | `.env` treo trên user admin tạm đã xóa sau lượt 3 → 33 test fail giả khi chạy lại (operational) | **FIXED** — tạo lại user tạm + đồng bộ `.env` + xác nhận grant 200; ghi rõ vòng đời |
+
+### 10.2 Bằng chứng kiểm thử (chạy thật, tách rõ loại)
+
+| Loại | Kết quả | Chi tiết |
+|---|---|---|
+| `bun run lint` | **PASS** | ESLint sạch |
+| `bun run typecheck` | **PASS** | tsc --noEmit 0 lỗi |
+| `bun test` (một lệnh, 2 file) | **120/120 PASS** | 65 unit (+5 lượt 4: 3 verify-rls storage seed/leak/seed-fail + 2 guard matrix) + 55 integration (+1 lượt 4: 8b.5b revoked-token trên 4 route mới nâng guard); chạy trên dev server audit (port 3001) + Supabase Auth thật + R2 thật + SQLite thật |
+| `bun run build` | **PASS** | Next build + standalone OK |
+| Guard matrix [UT] | **2 test PASS** | 9 handler phá hoi đều `requireAdminDestructive` + cấm `requireAdminMutation`; 10 handler metadata-only ngược lại — đọc nguồn route trực tiếp (tự phát hiện regression) |
+| Runtime revocation [IT] | **8b.5b PASS** | Token đã revoke → 401 trên `DELETE chapters/:id/pages`, `POST chapters/:id/pages` (finalize), `POST mangas/:id/cover`, `POST uploads/abort` — guard chạy TRUỚC body/rate limit |
+| verify-rls mock [UT] | **3 test PASS** | seed trước khi kiểm tra; `rls-storage-leak` (non-admin doc/sửa/xóa được dòng seed) → exit 1 không PASS giả; `storage-seed-fails` → exit 1 + cleanup vẫn chạy |
+
+**Ghi chú về môi trường test**: như lượt 3 — integration chạy với tài khoản admin tạm (`mangareader-itest-admin+…`) vì sandbox không có mật khẩu admin thật và tuyệt đối không reset mật khẩu chủ sở hữu; user tạm + `.env` được tái tạo đồng bộ (S31) và còn sống nhất quán cho các lần chạy sau. Tài khoản thật `admin@manga.vn` (UUID `7228d6e8-…`) không bị ảnh hưởng. Test data do suite tự tạo đã tự dọn.
+
+### 10.3 Phân loại cửa sổ 90s (yêu cầu “phân loại rõ thao tác nào chấp nhận được”)
+
+Nguyên tắc lượt 4: **guard theo hành vi phá hủy, không theo HTTP method**. Một handler được coi là PHÁ HỎY khi nó có thể xóa object R2 hoặc xóa dữ liệu thật không phục hồi được → bắt buộc `requireAdminDestructive` (xác minh session trực tiếp + `auth.sessions`, không qua cache 90s).
+
+**Bắt buộc Strict Session Guard (9 handler)**:
+
+| Handler | Lý do phá hủy |
+|---|---|
+| `DELETE /api/mangas/:id` (deleteManga) | Xóa truyện + toàn bộ chương/trang + R2 |
+| `DELETE /api/chapters/:id` (deleteChapter) | Xóa chương + pages + R2 |
+| `DELETE /api/chapters/:id/pages` (clearPages) | Xóa TOÀN BỘ trang + R2 |
+| `DELETE /api/chapters/:id/pages/:pageId` (deletePage) | Xóa trang + R2 |
+| `POST /api/chapters/:id/pages` (finalizePages) | B4 safe-delete object R2 của trang bị thay thế |
+| `POST /api/mangas/:id/cover` (setMangaCover) | Xóa object bìa cũ trên R2 |
+| `POST /api/mangas/:id/cover/from-page` (setMangaCover) | Xóa object bìa cũ trên R2 |
+| `POST /api/uploads/abort` (safe-delete) | Xóa object PENDING trên R2 |
+| `POST /api/storage/cleanup` | Xóa object R2 (pending/orphan/retry) |
+
+**Chấp nhận mutation guard 90s (10 handler — chỉ đọc/ghi metadata, KHÔNG xóa R2, thiệt hại nếu bị replay ≤90s chỉ là thay đổi metadata hoàn nguyên được bằng thao tác thường)**:
+
+| Handler | Lý do chấp nhận |
+|---|---|
+| `POST /api/mangas` (createManga) | Chỉ tạo bản ghi metadata |
+| `PATCH /api/mangas/:id` (updateManga) | Chỉ sửa metadata truyện |
+| `POST /api/mangas/:id/chapters` (createChapter) | Chỉ tạo bản ghi chương |
+| `PATCH /api/chapters/:id` (updateChapter) | Chỉ sửa số chương/tiêu đề (metadata) |
+| `POST /api/genres` | Chỉ tạo thể loại |
+| `POST /api/mangas/:id/favorite` | Đổi trạng thái yêu thích (thuận chiều đảo lại) |
+| `POST/PATCH /api/progress` | Tiến độ đọc — dữ liệu phái sinh, tự tạo lại khi đọc |
+| `DELETE /api/history` | Lịch sử đọc — dữ liệu phái sinh, tự tạo lại khi đọc, không phải file thật |
+| `POST /api/uploads/presign` | Chỉ ĐĂNG KÝ object PENDING + cấp URL — chưa tồn tại object nào |
+| `POST /api/uploads/direct` | Chỉ PUT object MỚI — không xóa object nào |
+
+Nhận xét: mọi handler “chấp nhận 90s” đều có tính chất **phái sinh/thuận nghịch** — nếu bị thực thi ngoài ý muốn, nội dung thư viện thật (truyện/chapter/trang/R2) không mất. Ma trận này được khoá cứng bằng unit test guard matrix — thêm route mới mà sai phân loại sẽ fail build test ngay.
+
+### 10.4 Số liệu Git (tính từ `git diff --stat`)
+
+- Riêng lượt 4 (so với `2fcd223`): **8 file, +600/−34** — 5 file route (đổi guard + ghi chú), `scripts/verify-rls.ts` (thiết kế lại C7 + cleanup 404), 2 file test (+6 test: 5 unit + 1 integration), báo cáo này. Số chính xác xem `git show --stat` của commit lượt 4.
+- So với main `18bd3ee`: xem `git diff --stat main..HEAD` tại thời điểm merge (cộng dồn 4 lượt).
+
+### 10.5 Trạng thái cuối
+
+**NOT YET PRODUCTION READY — EXTERNAL BLOCKERS REMAIN** (giữ nguyên kết luận 3 lượt trước — không tuyên bố PRODUCTION READY khi: migration PostgreSQL chưa áp, verify RLS Phase C chưa chạy thật, chưa deploy Vercel — chi tiết §7).
+
+Sau lượt 4, mã nguồn đạt: **mọi thao tác phá hủy dữ liệu thật (xóa object R2 / xóa nội dung không phục hồi) đều được xác minh session uy quyền ngay tại thời điểm thực thi** — không còn ngoại lệ theo HTTP method; **verify-rls không còn khả năng PASS giả trên bảng rống** và **không FAIL giả khi RLS lành mạnh**; vòng đời tài khoản test được ghi rõ. Hai vấn đề của phản hồi độc lập đã đóng — audit branch đủ điều kiện merge theo tiêu chí chủ sở hữu đặt ra (sau khi chủ sở hữu xác nhận lại trên GitHub).
 
 *Không có dữ liệu thật nào bị reset; không object R2 nào của dữ liệu thật bị xóa; tài khoản admin thật không bị thay đổi; `main` vẫn ở `18bd3ee`.*

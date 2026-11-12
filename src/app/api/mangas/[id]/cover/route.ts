@@ -2,8 +2,13 @@
 //
 // BAO MAT: verify object TON TAI tren R2 (HeadObject) + kich thuoc/mime
 // khop khai bao + key thuoc namespace cover cua truyen TRUOC khi confirm.
+//
+// GUARD (pass 4): setMangaCover thay bia cu bang object moi thi
+// safe-delete object bia CU tren R2 (mark DELETE_PENDING -> xoa R2).
+// Do la thao tac PHA HOI du lieu thuc cho du endpoint dung POST —
+// dung Strict Session Guard (xac minh session truc tiep, khong qua cache 90s).
 import { NextRequest, NextResponse } from "next/server";
-import { ok, requireAdminMutation, parseBody, fail, withErrorHandling, ApiError } from "@/lib/api";
+import { ok, requireAdminDestructive, parseBody, fail, withErrorHandling, ApiError } from "@/lib/api";
 import { coverFinalizeSchema, MAX_FILE_SIZE } from "@/schemas";
 import { db } from "@/lib/db";
 import { headObject } from "@/lib/r2";
@@ -15,7 +20,8 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
-  await requireAdminMutation(req);
+  // setMangaCover co safe-delete object bia cu tren R2 -> PHA HOI (pass 4).
+  await requireAdminDestructive(req);
   const { id: mangaId } = await ctx.params;
   const input = await parseBody(req, coverFinalizeSchema);
 

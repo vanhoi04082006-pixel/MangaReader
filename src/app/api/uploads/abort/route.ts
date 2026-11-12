@@ -7,8 +7,13 @@
 //
 // Bao mat: chi cho phep abort object dang PENDING (khong cho abort
 // object da CONFIRMED — do la du lieu thuc).
+//
+// GUARD (pass 4): abort thuc hien xoa object TREN R2 (safe-delete) —
+// tuy chi ap dung cho object PENDING (chua finalize), day van la thao tac
+// XOA tren R2 -> Strict Session Guard (xac minh session truc tiep,
+// khong qua cache 90s) de dong nhat voi moi route co xoa R2.
 import { NextRequest, NextResponse } from "next/server";
-import { ok, parseBody, requireAdminMutation, withErrorHandling } from "@/lib/api";
+import { ok, parseBody, requireAdminDestructive, withErrorHandling } from "@/lib/api";
 import { uploadsAbortSchema } from "@/schemas";
 import { db } from "@/lib/db";
 import { safeDeleteObjects } from "@/services/storage-service";
@@ -18,7 +23,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const POST = withErrorHandling(async (req: NextRequest) => {
-  const user = await requireAdminMutation(req);
+  // Xoa object tren R2 (safe-delete) -> Strict Session Guard (pass 4).
+  const user = await requireAdminDestructive(req);
 
   const rl = await hitRateLimit(`abort:${user.id}`, RATE_LIMITS.abort.limit, RATE_LIMITS.abort.windowMs);
   if (!rl.allowed) {

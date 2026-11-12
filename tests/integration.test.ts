@@ -1155,6 +1155,51 @@ describe("8b. Cross-runtime session revocation & revoked-token enforcement", () 
     expect(res.status).toBe(401);
   });
 
+  test("8b.5b (pass 4) token da revoke KHONG thuc hien duoc 4 route xoa R2 vua nang len Strict Session Guard (-> 401)", async () => {
+    // Pass 4: cac route duoi day CO xoa object R2 nhung truoc day chi dung
+    // requireAdminMutation (chiu cua so cache 90s tren instance khac sau
+    // logout). Sau pass 4 tat ca dung requireAdminDestructive — token da
+    // revoke phai bi tu choi NGAY (chu dong guard chay TRUOC body/rate limit).
+    const mangaId = crypto.randomUUID();
+    const chapterId = crypto.randomUUID();
+
+    // DELETE /api/chapters/:id/pages — clearPages (xoa TOAN BO trang + R2)
+    const clearPages = await api("DELETE", `/api/chapters/${chapterId}/pages`, {
+      bearer: accessToken,
+      origin: null,
+    });
+    expect(clearPages.status).toBe(401); // 401 den truoc 404 (chapter khong ton tai)
+
+    // POST /api/chapters/:id/pages — finalizePages (buoc B4 xoa object trang bi thay the)
+    const finalize = await api("POST", `/api/chapters/${chapterId}/pages`, {
+      bearer: accessToken,
+      origin: null,
+      json: { pages: [] },
+    });
+    expect(finalize.status).toBe(401);
+
+    // POST /api/mangas/:id/cover — setMangaCover (xoa object bia cu tren R2)
+    const cover = await api("POST", `/api/mangas/${mangaId}/cover`, {
+      bearer: accessToken,
+      origin: null,
+      json: {
+        objectKey: `mangas/${mangaId}/covers/evil.jpg`,
+        fileName: "evil.jpg",
+        fileSize: 1,
+        mimeType: "image/jpeg",
+      },
+    });
+    expect(cover.status).toBe(401);
+
+    // POST /api/uploads/abort — abort (safe-delete object PENDING tren R2)
+    const abort = await api("POST", "/api/uploads/abort", {
+      bearer: accessToken,
+      origin: null,
+      json: { objectKeys: [`mangas/${mangaId}/pages/1.jpg`] },
+    });
+    expect(abort.status).toBe(401);
+  });
+
   test("8b.6 session admin DANG SONG van lam viec + refresh token da tieu thu (logout) khong reuse duoc", async () => {
     // (a) Login moi — session DANG SONG phai lam viec binh thuong (valid active admin session)
     const login = await api("POST", "/api/auth/login", {

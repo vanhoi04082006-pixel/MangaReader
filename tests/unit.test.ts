@@ -611,11 +611,30 @@ interface MockCall {
   body?: unknown;
 }
 
-type MockMode = "ok" | "invalid-pk" | "tables-missing" | "grant-fails" | "rls-fails" | "cleanup-manga-fails";
+type MockMode =
+  | "ok"
+  | "invalid-pk"
+  | "tables-missing"
+  | "grant-fails"
+  | "rls-fails"
+  | "cleanup-manga-fails"
+  // Pass 4 — storage_objects
+  | "rls-storage-leak"
+  | "storage-seed-fails";
 
 function makeSupabaseMock(mode: MockMode = "ok") {
   const calls: MockCall[] = [];
-  const state = { createdEmail: "", seededMangaId: "", seededTitle: "", tempUserId: "11111111-2222-3333-4444-555555555555" };
+  const state = {
+    createdEmail: "",
+    seededMangaId: "",
+    seededTitle: "",
+    tempUserId: "11111111-2222-3333-4444-555555555555",
+    // Pass 4 — storage_objects seed
+    seededStorageId: "",
+    seededStorageFileName: "",
+    storagePatched: false,
+    storageDeletedByLeak: false,
+  };
   const SB = "https://unit-test.supabase.co";
   const PK = "sb_publishable_UNITTEST";
   const SK = "sb_secret_UNITTEST";
@@ -681,8 +700,47 @@ function makeSupabaseMock(mode: MockMode = "ok") {
         if (method === "POST") return json(403, { message: "new row violates row-level security policy" });
         if (method === "DELETE") return json(200, []);
       }
+      // Pass 4 — storage_objects: seed mau THAT bang service key, moi kiem tra
+      // non-admin tren dong seed (bang rong = PASS gia — xem verify-rls.ts C7).
       if (url.includes("/rest/v1/storage_objects")) {
-        return json(200, []);
+        const isService = apikey === SK;
+        // Seed qua service key — track id + file_name giong PostgREST that
+        if (method === "POST" && isService) {
+          if (mode === "storage-seed-fails") return json(500, { message: "seed boom" });
+          const rows = body as Array<{ id: string; file_name: string }>;
+          state.seededStorageId = rows?.[0]?.id ?? "";
+          state.seededStorageFileName = rows?.[0]?.file_name ?? "";
+          return json(201, rows);
+        }
+        // Service doc lai dong seed (read-back C7a / integrity C7c, C7d)
+        if (isService && method === "GET") {
+          if (state.storageDeletedByLeak) return json(200, []);
+          const file_name = state.storagePatched
+            ? "[RLS-VERIFY] HACKED — KHONG duoc phep"
+            : state.seededStorageFileName;
+          if (url.includes("select=file_name")) return json(200, [{ file_name }]);
+          return json(200, [{ id: state.seededStorageId, file_name }]);
+        }
+        // Non-admin: mode rls-storage-leak -> RLS hong cho doc/sua/xoa dong seed
+        if (mode === "rls-storage-leak" && !isService && bearer === USER_AT) {
+          if (method === "GET") return json(200, [{ id: state.seededStorageId }]);
+          if (method === "PATCH") {
+            state.storagePatched = true;
+            return json(200, [{ id: state.seededStorageId }]);
+          }
+          if (method === "DELETE") {
+            state.storageDeletedByLeak = true;
+            return json(200, [{ id: state.seededStorageId }]);
+          }
+        }
+        // RLS lanh manh (default): loc het 200 [] — y nghia VI bang co dong seed
+        if (method === "GET") return json(200, []);
+        if (method === "PATCH") return json(200, []);
+        if (method === "DELETE") {
+          // Cleanup service key: row da bi leak-delete that -> PostgREST 404
+          if (isService && state.storageDeletedByLeak) return json(404, { message: "row already deleted" });
+          return json(200, []);
+        }
       }
       if (url.includes("/rest/v1/profiles")) {
         return json(200, []);
@@ -805,5 +863,152 @@ describe("verify-rls control flow (cleanup luon chay, exit code sau cleanup)", (
     const code = await runVerification({ env: { SB_URL: "", PK: "", SK: "" }, fetchImpl: m.impl });
     expect(code).toBe(2);
     expect(m.calls.length).toBe(0);
+  });
+});
+
+// =============================================================
+// AUDIT PASS 4 — verify-rls: storage_objects seed MAU THAT
+// (chong PASS gia khi bang rong ngay sau migration)
+// =============================================================
+describe("verify-rls pass 4 — storage_objects: seed truoc khi kiem tra (chong PASS gia)", () => {
+  test("SEED TRUOC KIEM TRA: service key POST storage_objects TRUOC non-admin GET + doc lai dong seed — exit 0", async () => {
+    const m = makeSupabaseMock("ok");
+    const code = await runVerification({ env: m.env, fetchImpl: m.impl });
+    expect(code).toBe(0);
+
+    // 1) Script phai seed dong storage_objects bang SERVICE key (POST)
+    const seedIdx = m.calls.findIndex(
+      (c) => c.method === "POST" && c.url.includes("/rest/v1/storage_objects") && c.apikey === m.env.SK
+    );
+    expect(seedIdx).toBeGreaterThanOrEqual(0);
+
+    // 2) Non-admin doc dong seed PHAI den SAU seed (khong con kiem tra tren bang rong)
+    const naReadIdx = m.calls.findIndex(
+      (c) =>
+        c.method === "GET" &&
+        c.url.includes("/rest/v1/storage_objects") &&
+        c.url.includes(`id=eq.`) &&
+        c.bearer === "unit-test.access.token.jwt"
+    );
+    expect(naReadIdx).toBeGreaterThan(seedIdx);
+
+    // 3) Non-admin phai thu UPDATE va DELETE tren dong seed (kiem tra quyen ghi)
+    const naPatch = m.calls.find(
+      (c) => c.method === "PATCH" && c.url.includes("/rest/v1/storage_objects") && c.bearer === "unit-test.access.token.jwt"
+    );
+    expect(naPatch).toBeDefined();
+    const naDelete = m.calls.find(
+      (c) => c.method === "DELETE" && c.url.includes("/rest/v1/storage_objects") && c.bearer === "unit-test.access.token.jwt"
+    );
+    expect(naDelete).toBeDefined();
+
+    // 4) Cleanup xoa storage seed (luon trong finally)
+    const storageCleanup = m.calls.find(
+      (c) => c.method === "DELETE" && c.url.includes(`/rest/v1/storage_objects?id=eq.${m.state.seededStorageId}`) && c.apikey === m.env.SK
+    );
+    expect(storageCleanup).toBeDefined();
+    expect(m.state.seededStorageId.length).toBeGreaterThan(30); // UUID that do script tao
+  });
+
+  test("RLS HONG tren storage_objects (leak doc/sua/xoa dong seed) -> exit 1 — KHONG PASS gia", async () => {
+    const m = makeSupabaseMock("rls-storage-leak");
+    const code = await runVerification({ env: m.env, fetchImpl: m.impl });
+    expect(code).toBe(1);
+    // Mock chi set 2 state nay khi request non-admin THAT den va duoc chap nhan
+    // (mo phong RLS hong) — chung minh script da thu sua/xoa bang session non-admin
+    expect(m.state.storagePatched).toBe(true);
+    expect(m.state.storageDeletedByLeak).toBe(true);
+    // Cleanup van chay du check FAIL: xoa user tam + manga seed
+    const userDelete = m.calls.find(
+      (c) => c.url.endsWith(`/auth/v1/admin/users/${m.state.tempUserId}`) && c.method === "DELETE"
+    );
+    expect(userDelete).toBeDefined();
+    const seedDelete = m.calls.find(
+      (c) => c.method === "DELETE" && c.url.includes(`/rest/v1/mangas?id=eq.${m.state.seededMangaId}`)
+    );
+    expect(seedDelete).toBeDefined();
+  });
+
+  test("SEED FAIL (service key khong ghi duoc storage_objects) -> exit 1 + cleanup van xoa user + manga seed", async () => {
+    const m = makeSupabaseMock("storage-seed-fails");
+    const code = await runVerification({ env: m.env, fetchImpl: m.impl });
+    expect(code).toBe(1);
+    const userDelete = m.calls.find(
+      (c) => c.url.endsWith(`/auth/v1/admin/users/${m.state.tempUserId}`) && c.method === "DELETE"
+    );
+    expect(userDelete).toBeDefined();
+    const seedDelete = m.calls.find(
+      (c) => c.method === "DELETE" && c.url.includes(`/rest/v1/mangas?id=eq.${m.state.seededMangaId}`)
+    );
+    expect(seedDelete).toBeDefined();
+    // Khong tao storage row -> khong co lệnh DELETE storage nao
+    expect(
+      m.calls.some((c) => c.method === "DELETE" && c.url.includes("/rest/v1/storage_objects"))
+    ).toBe(false);
+  });
+});
+
+// =============================================================
+// AUDIT PASS 4 — Admin guard matrix: moi thao tac XOA object R2 /
+// pha hoi du lieu thuc phai dung Strict Session Guard
+// (requireAdminDestructive — khong phu thuoc HTTP method)
+// =============================================================
+import { readFileSync as fsReadFileSync } from "node:fs";
+import * as nodePath from "node:path";
+
+/** Cat doan handler tu `export const <METHOD>` den handler ke tiep / EOF. */
+function handlerSlice(src: string, method: string): string {
+  const start = src.search(new RegExp(`export\\s+const\\s+${method}\\b`));
+  if (start < 0) return "";
+  const rest = src.slice(start);
+  const next = rest.slice(1).search(/\nexport\s+const\s+(GET|POST|PUT|PATCH|DELETE)\b/);
+  return next < 0 ? rest : rest.slice(0, next + 1);
+}
+
+describe("PASS 4 — Admin guard matrix (Strict Session Guard cho moi thao tac xoa R2)", () => {
+  const route = (p: string) =>
+    fsReadFileSync(nodePath.resolve(import.meta.dir, "..", "src", "app", "api", p), "utf8");
+
+  test("Moi handler CO xoa object R2 / pha hoi du lieu dung requireAdminDestructive, KHONG dung requireAdminMutation", () => {
+    // Bat buoc day du — mat dong nao la mo cua so 90s cho thao tac do.
+    const destructive: Array<[string, string, string]> = [
+      ["chapters/[id]/pages/route.ts", "DELETE", "clearPages: xoa toan bo trang (DB + R2)"],
+      ["chapters/[id]/pages/route.ts", "POST", "finalizePages B4: safe-delete object trang bi thay the"],
+      ["chapters/[id]/route.ts", "DELETE", "deleteChapter"],
+      ["chapters/[id]/pages/[pageId]/route.ts", "DELETE", "deletePage"],
+      ["mangas/[id]/route.ts", "DELETE", "deleteManga"],
+      ["mangas/[id]/cover/route.ts", "POST", "setMangaCover: xoa object bia cu tren R2"],
+      ["mangas/[id]/cover/from-page/route.ts", "POST", "setMangaCover: xoa object bia cu tren R2"],
+      ["uploads/abort/route.ts", "POST", "abort: safe-delete object PENDING tren R2"],
+      ["storage/cleanup/route.ts", "POST", "cleanup: xoa object R2 (pending/orphan/retry)"],
+    ];
+    for (const [file, method, why] of destructive) {
+      const block = handlerSlice(route(file), method);
+      expect(block.length).toBeGreaterThan(0);
+      expect(block).toContain("await requireAdminDestructive(");
+      expect(block).not.toContain("requireAdminMutation(");
+      void why;
+    }
+  });
+
+  test("Route chi doc/tao/sua metadata KHONG xoa R2 -> giu requireAdminMutation (phan loai 90s window)", () => {
+    const metadataOnly: Array<[string, string]> = [
+      ["mangas/route.ts", "POST"],
+      ["mangas/[id]/route.ts", "PATCH"],
+      ["mangas/[id]/chapters/route.ts", "POST"],
+      ["chapters/[id]/route.ts", "PATCH"],
+      ["genres/route.ts", "POST"],
+      ["history/route.ts", "DELETE"],
+      ["progress/route.ts", "POST"],
+      ["mangas/[id]/favorite/route.ts", "POST"],
+      ["uploads/presign/route.ts", "POST"],
+      ["uploads/direct/route.ts", "POST"],
+    ];
+    for (const [file, method] of metadataOnly) {
+      const block = handlerSlice(route(file), method);
+      expect(block.length).toBeGreaterThan(0);
+      expect(block).toContain("requireAdminMutation(");
+      expect(block).not.toContain("requireAdminDestructive(");
+    }
   });
 });

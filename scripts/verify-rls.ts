@@ -24,6 +24,14 @@
 //   manga test roi xoa sach): anon + non-admin bi chan; service key
 //   doc/ghi duoc (duong dan migration dung). Kiem tra lai dong nguyen ven
 //   sau moi thu (0 row bi anh huong).
+//   C7 (pass 4): storage_objects seed MAU THAT bang service key TRUOC khi
+//   kiem tra. Bang storage_objects rong ngay sau migration (chua nap du lieu
+//   SQLite -> PostgreSQL) — kiem tra "200 []" tren bang rong la PASS GIA:
+//   ca "RLS chan dung" lan "RLS tat/cho phep tat" deu tra 200 []. Chi khi
+//   bang CHUA dong seed (chung qua service key) thi "200 []" moi chung minh
+//   RLS loc dong that. Kiem tra them UPDATE/DELETE vao dong seed (0 row anh
+//   huong + du lieu nguyen ven). app_config khong seed vi migration DA
+//   insert san dong admin_user_id (bang khong the rong).
 //
 // ================= DON DEP LUON CHAY (cleanup) =================
 // KHONG dung process.exit() trong vung co tai nguyen tam — dung throw +
@@ -106,6 +114,8 @@ interface Created {
   attemptedMangaIds: string[];
   /** Id dong manga seed qua service key. */
   seededMangaId: string | null;
+  /** Id dong storage_objects seed qua service key (pass 4 — chong PASS gia). */
+  seededStorageId: string | null;
   /** Key app_config ma script thu ghi — xoa phong thi hai. */
   attemptedConfigKeys: string[];
 }
@@ -187,6 +197,33 @@ async function cleanup(ctx: Ctx): Promise<boolean> {
   console.log("");
   console.log("--- Don dep tai nguyen tam (chi du lieu script nay tao) ---");
 
+  // 0. Dong storage_objects seed qua service key (XOA TRUOC manga seed:
+  //    row nay tham chieu manga_id cua dong manga seed — xoa con truoc cha.)
+  //    PostgREST DELETE anh huong 0 row -> 404; day la row DA TAO CHAC CHAN
+  //    (seed thanh cong moi duoc ghi vao created) nen 404 nghia la row da
+  //    bien mat giua chuong trinh — thuong do check C7 DELETE that bai (RLS
+  //    hong cho non-admin xoa that). Check do da FAIL o tren; day bao them LOI.
+  if (c.seededStorageId) {
+    try {
+      const r = await serviceRest(ctx, "DELETE", `/rest/v1/storage_objects?id=eq.${c.seededStorageId}`);
+      if (r.status === 200 || r.status === 204) {
+        console.log(`OK    xoa storage_objects test (seed) ${c.seededStorageId}`);
+      } else {
+        allOk = false;
+        console.error(`LOI   khong xoa duoc storage_objects test (seed) ${c.seededStorageId}: status=${r.status}`);
+        if (r.status === 404) {
+          console.error("      Row seed da bien mat giua chuong trinh — kha nang cao: check C7 DELETE");
+          console.error("      that bai (RLS hong) va non-admin da xoa that. Xem log FAIL o tren.");
+        } else {
+          console.error(`      XOA TAY: DELETE ${ctx.env.SB_URL}/rest/v1/storage_objects?id=eq.${c.seededStorageId} (service key)`);
+        }
+      }
+    } catch (err) {
+      allOk = false;
+      console.error(`LOI   xoa storage_objects test (seed) ${c.seededStorageId}:`, err instanceof Error ? err.message : err);
+    }
+  }
+
   // 1. Dong manga seed qua service key
   if (c.seededMangaId) {
     try {
@@ -204,12 +241,17 @@ async function cleanup(ctx: Ctx): Promise<boolean> {
     }
   }
 
-  // 2. Cac manga ma script THU insert (neu RLS hong -> row co the da tao)
+  // 2. Cac manga ma script THU insert (neu RLS hong -> row co the da tao).
+  //    404 = khong co gi phai xoa: INSERT da bi RLS chan dung ngay truoc do
+  //    (PostgREST DELETE anh huong 0 row tra 404) — day la ket qua MONG DOI
+  //    tren he thong RLS lanh manh, KHONG phai loi cleanup.
   for (const id of c.attemptedMangaIds) {
     try {
       const r = await serviceRest(ctx, "DELETE", `/rest/v1/mangas?id=eq.${id}`);
       if (r.status === 200 || r.status === 204) {
         console.log(`OK    xoa manga thu insert ${id} (phong thi hai)`);
+      } else if (r.status === 404) {
+        console.log(`OK    manga thu insert ${id}: khong ton tai (RLS da chan INSERT dung nhu du kien — 0 row can don)`);
       } else {
         allOk = false;
         console.error(`LOI   khong xoa duoc manga thu insert ${id}: status=${r.status}`);
@@ -220,12 +262,15 @@ async function cleanup(ctx: Ctx): Promise<boolean> {
     }
   }
 
-  // 3. Key app_config ma script thu ghi (neu RLS hong)
+  // 3. Key app_config ma script thu ghi (neu RLS hong). 404 = khong co gi
+  //    phai xoa: INSERT da bi chan dung (PostgREST DELETE 0 row -> 404).
   for (const key of c.attemptedConfigKeys) {
     try {
       const r = await serviceRest(ctx, "DELETE", `/rest/v1/app_config?key=eq.${encodeURIComponent(key)}`);
       if (r.status === 200 || r.status === 204) {
         console.log(`OK    xoa app_config "${key}" (phong thi hai)`);
+      } else if (r.status === 404) {
+        console.log(`OK    app_config "${key}": khong ton tai (RLS da chan INSERT dung nhu du kien — 0 row can don)`);
       } else {
         allOk = false;
         console.error(`LOI   khong xoa duoc app_config "${key}": status=${r.status}`);
@@ -256,7 +301,7 @@ async function cleanup(ctx: Ctx): Promise<boolean> {
     }
   }
 
-  if (!c.tempUserId && !c.seededMangaId && c.attemptedMangaIds.length === 0 && c.attemptedConfigKeys.length === 0) {
+  if (!c.tempUserId && !c.seededMangaId && !c.seededStorageId && c.attemptedMangaIds.length === 0 && c.attemptedConfigKeys.length === 0) {
     console.log("(Khong co tai nguyen tam nao duoc tao — khong can don dep.)");
   }
   if (!allOk) {
@@ -284,13 +329,18 @@ export async function runVerification(deps: VerifyDeps = {}): Promise<number> {
     env,
     f,
     failures: 0,
-    created: { tempUserId: null, seededMangaId: null, attemptedMangaIds: [], attemptedConfigKeys: [] },
+    created: { tempUserId: null, seededMangaId: null, seededStorageId: null, attemptedMangaIds: [], attemptedConfigKeys: [] },
   };
 
   const TEST_EMAIL = `mangareader-rls-verify+${Date.now()}@example.com`;
   const TEST_PASSWORD = "RlsVerify!2026";
   const TEST_MANGA_ID = randomUUID();
   const TEST_MANGA_TITLE = `[RLS-VERIFY] temp ${Date.now()} — XOA SAU TEST`;
+  // Dong storage_objects seed (pass 4): bang rong ngay sau migration —
+  // "200 []" tren bang rong la PASS GIA. Phai co MAU THAT de chung minh RLS.
+  const TEST_STORAGE_ID = randomUUID();
+  const TEST_STORAGE_KEY = `mangas/${TEST_MANGA_ID}/covers/rls-verify.jpg`;
+  const TEST_STORAGE_FILE_NAME = `[RLS-VERIFY] temp-cover ${Date.now()} — XOA SAU TEST`;
 
   console.log("=== MangaReader — RLS + API Key Verification ===");
   console.log(`Project  : ${env.SB_URL}`);
@@ -524,17 +574,132 @@ export async function runVerification(deps: VerifyDeps = {}): Promise<number> {
     );
 
     // ---------- Phase C7: bang nhay cam khac ----------
-    const naStorage = await userRest(ctx, "GET", "/rest/v1/storage_objects?select=id&limit=1", AT);
-    check(ctx, "C7a. Non-admin KHONG doc duoc storage_objects", isReadDenied(naStorage), `status=${naStorage.status}`);
+    // storage_objects: bang RONG ngay sau migration (SQLite -> PostgreSQL
+    // chua nap du lieu) — "200 []" cho non-admin tren bang rong KHONG chung
+    // minh gi (ca RLS chan dung lan RLS tat deu tra 200 []). Pass 4:
+    // seed MAU THAT bang service key, chung minh dong ton tai bang doc lai,
+    // ROI moi kiem tra non-admin khong doc/sua/xoa duoc dong do.
+    const seedStorage = await serviceRest(ctx, "POST", "/rest/v1/storage_objects", [
+      {
+        id: TEST_STORAGE_ID,
+        object_key: TEST_STORAGE_KEY,
+        kind: "COVER",
+        status: "PENDING",
+        file_name: TEST_STORAGE_FILE_NAME,
+        file_size: 12345,
+        mime_type: "image/jpeg",
+        manga_id: TEST_MANGA_ID,
+      },
+    ]);
+    if (seedStorage.status !== 200 && seedStorage.status !== 201) {
+      throw new VerifyError(
+        `Khong tao duoc dong storage_objects test qua service key: ${seedStorage.status} ${seedStorage.text.slice(0, 120)}`,
+        1
+      );
+    }
+    ctx.created.seededStorageId = TEST_STORAGE_ID;
 
+    // C7a. Service key doc lai dong seed — chung minh BANG KHONG RONG tai thoi
+    //      diem kiem tra (phao chong PASS gia). Neu doc khong ra dong, moi
+    //      check "200 []" phia duoi deu vo nghia.
+    const readBackStorage = await serviceRest(
+      ctx,
+      "GET",
+      `/rest/v1/storage_objects?id=eq.${TEST_STORAGE_ID}&select=id,file_name`
+    );
+    const storageSeeded =
+      readBackStorage.status === 200 && readBackStorage.text.includes(TEST_STORAGE_ID);
+    check(
+      ctx,
+      "C7a. Service key doc duoc dong storage_objects seed (bang CO du lieu — chong PASS gia bang trong)",
+      storageSeeded,
+      `status=${readBackStorage.status}`
+    );
+    if (!storageSeeded) {
+      throw new VerifyError(
+        `Dong storage_objects seed KHONG doc lai duoc (status=${readBackStorage.status}) — khong the kiem tra RLS tren bang "rong". Kiem tra service key / migration.`,
+        1
+      );
+    }
+
+    // C7b. Non-admin doc tung dong seed theo id: phai KHONG thay dong
+    //     (200 [] = RLS loc dong DANG TON TAI — y nghia that; 403 = policy chan).
+    //     Neu response chua id seed -> RLS dang hong (leak) -> FAIL.
+    const naStorageRead = await userRest(
+      ctx,
+      "GET",
+      `/rest/v1/storage_objects?id=eq.${TEST_STORAGE_ID}&select=id`,
+      AT
+    );
+    check(
+      ctx,
+      "C7b. Non-admin KHONG doc duoc dong storage_objects seed (RLS loc dong that — bang khong rong)",
+      isReadDenied(naStorageRead) && !naStorageRead.text.includes(TEST_STORAGE_ID),
+      `status=${naStorageRead.status} body=${naStorageRead.text.slice(0, 80)}`
+    );
+
+    // C7c. Non-admin UPDATE vao dong seed: phai 0 row anh huong + file_name
+    //      nguyen ven (doc lai bang service key).
+    const naStorageUpdate = await userRest(
+      ctx,
+      "PATCH",
+      `/rest/v1/storage_objects?id=eq.${TEST_STORAGE_ID}`,
+      AT,
+      { file_name: "[RLS-VERIFY] HACKED — KHONG duoc phep" }
+    );
+    let storageUpdateDenied = isWriteDenied(naStorageUpdate);
+    const afterStorageUpdate = await serviceRest(
+      ctx,
+      "GET",
+      `/rest/v1/storage_objects?id=eq.${TEST_STORAGE_ID}&select=file_name`
+    );
+    const storageRowAfterUpdate = (
+      JSON.parse(afterStorageUpdate.text || "[]") as Array<{ file_name: string }>
+    )[0];
+    if (!storageRowAfterUpdate || storageRowAfterUpdate.file_name !== TEST_STORAGE_FILE_NAME) {
+      storageUpdateDenied = false;
+    }
+    check(
+      ctx,
+      "C7c. Non-admin KHONG update duoc storage_objects (0 row anh huong + file_name nguyen ven)",
+      storageUpdateDenied,
+      `status=${naStorageUpdate.status} file_name_con=${storageRowAfterUpdate?.file_name?.slice(0, 30)}`
+    );
+
+    // C7d. Non-admin DELETE dong seed: phai 0 row anh huong + dong van ton tai.
+    const naStorageDelete = await userRest(
+      ctx,
+      "DELETE",
+      `/rest/v1/storage_objects?id=eq.${TEST_STORAGE_ID}`,
+      AT
+    );
+    let storageDeleteDenied = isWriteDenied(naStorageDelete);
+    const afterStorageDelete = await serviceRest(
+      ctx,
+      "GET",
+      `/rest/v1/storage_objects?id=eq.${TEST_STORAGE_ID}&select=id`
+    );
+    const storageRowsAfterDelete = JSON.parse(afterStorageDelete.text || "[]") as Array<{
+      id: string;
+    }>;
+    if (storageRowsAfterDelete.length !== 1) storageDeleteDenied = false;
+    check(
+      ctx,
+      "C7d. Non-admin KHONG delete duoc storage_objects (0 row anh huong + dong con nguyen)",
+      storageDeleteDenied,
+      `status=${naStorageDelete.status} rows=${storageRowsAfterDelete.length}`
+    );
+
+    // app_config: KHONG can seed — migration da insert san dong admin_user_id
+    // (bang khong the rong), nen "200 []" cho non-admin y nghia that.
     const naConfig = await userRest(ctx, "GET", "/rest/v1/app_config?select=*&limit=1", AT);
-    check(ctx, "C7b. Non-admin KHONG doc duoc app_config", isReadDenied(naConfig), `status=${naConfig.status}`);
+    check(ctx, "C7e. Non-admin KHONG doc duoc app_config", isReadDenied(naConfig), `status=${naConfig.status}`);
 
     ctx.created.attemptedConfigKeys.push("rls-verify-evil");
     const naConfigWrite = await userRest(ctx, "POST", "/rest/v1/app_config", AT, [
       { key: "rls-verify-evil", value: "00000000-0000-0000-0000-000000000000" },
     ]);
-    check(ctx, "C7c. Non-admin KHONG ghi duoc app_config", isWriteDenied(naConfigWrite), `status=${naConfigWrite.status}`);
+    check(ctx, "C7f. Non-admin KHONG ghi duoc app_config", isWriteDenied(naConfigWrite), `status=${naConfigWrite.status}`);
   } catch (err) {
     if (err instanceof VerifyError) {
       if (err.exitCode === 2) {
