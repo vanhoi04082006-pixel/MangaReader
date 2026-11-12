@@ -60,3 +60,10 @@ server.log
 # local database files
 db/*.db
 db/*.db-journal
+
+# manga-reader additions
+!.env.example
+.zscripts/dev.pid
+dev.log
+db/*.db
+db/*.db-journal
