@@ -88,7 +88,13 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
 
   // Gioi han phu hop Vercel: proxy chi nhan file nho. File lon PHAI di
   // qua presigned PUT truc tiep (khong bi gioi han body size cua host).
-  const declared = row.fileSize;
+  // LUU Y (production pg schema): storage_objects.file_size la BigInt
+  // -> Prisma tra ve JS BigInt. PHAI chuan hoa Number(...) 1 lan truoc khi
+  // so sanh/tinh toan (gia tri <= 100MB nen khong mat do chinh xac).
+  const declared = Number(row.fileSize);
+  if (!Number.isSafeInteger(declared) || declared <= 0) {
+    return fail("Metadata kích thước không hợp lệ.", 400, "bad_metadata");
+  }
   if (declared > MAX_PROXY_FILE_SIZE) {
     return fail(
       `File ${Math.round(declared / 1024 / 1024)}MB vượt quá giới hạn proxy (${Math.round(
@@ -176,13 +182,9 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
     return fail("Upload lên R2 thất bại.", 502, "r2_error");
   }
 
-  // Cap nhat dung luong theo byte DA DEM (khong tin header)
-  if (actualBytes > 0 && row.fileSize !== actualBytes) {
-    await db.storageObject.update({
-      where: { objectKey: key },
-      data: { fileSize: actualBytes },
-    });
-  }
+  // Cap nhat dung luong theo byte DA DEM (khong tin header):
+  // sau cua actualBytes === declared thi row.fileSize da dung gia tri
+  // nay (update lai chi la no-op) — bo khoi de han che ghi DB khong can thiet.
 
   return ok({ uploaded: true, objectKey: key, sizeBytes: actualBytes });
 }) as unknown as (req: NextRequest) => Promise<NextResponse>;

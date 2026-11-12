@@ -202,13 +202,15 @@ describe("2. Login that bai / non-admin", () => {
     expect(body.code).toBe("invalid_credentials");
   });
 
-  test("email khong phai admin -> 403 forbidden_account", async () => {
+  test("email khong phai admin -> 401 invalid_credentials (anti-enumeration)", async () => {
     const res = await api("POST", "/api/auth/login", {
       json: { email: "randomuser@example.com", password: "Whatever!123" },
     });
-    expect(res.status).toBe(403);
+    // Chung cu anti-enumeration: response phai GIONG HET sai mat khau
+    // (401 invalid_credentials) — khong tao oracle phan biet email admin.
+    expect(res.status).toBe(401);
     const body = (await res.json()) as { code?: string };
-    expect(body.code).toBe("forbidden_account");
+    expect(body.code).toBe("invalid_credentials");
   });
 
   test("email khong hop le -> 400 validation", async () => {
@@ -321,11 +323,11 @@ describe("5. Second Supabase user (non-admin) — authorization boundary", () =>
     secondUserId = body.id ?? null;
   });
 
-  test("second user login qua APP -> 403 forbidden_account", async () => {
+  test("second user login qua APP -> 401 invalid_credentials (anti-enumeration)", async () => {
     const res = await api("POST", "/api/auth/login", {
       json: { email: TEST_EMAIL, password: TEST_PASSWORD },
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   test("second user call API truc tiep bang Bearer token (bypass login) -> 403", async () => {

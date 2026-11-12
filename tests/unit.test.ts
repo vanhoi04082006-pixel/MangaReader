@@ -35,6 +35,7 @@ import { localJwtSign, ACCESS_COOKIE } from "../src/lib/session";
 // Canh bao: khong import module session truoc khi set env o cac test provider
 import {
   effectiveAuthProvider,
+  getEnv,
   isAdminUser,
   missingEnvVars,
   isValidUuid,
@@ -1010,5 +1011,45 @@ describe("PASS 4 — Admin guard matrix (Strict Session Guard cho moi thao tac x
       expect(block).toContain("requireAdminMutation(");
       expect(block).not.toContain("requireAdminDestructive(");
     }
+  });
+});
+
+// ---- Numeric env config: fail-closed parse (S35 run-1 audit) ----
+describe("getEnv numeric knobs (STORAGE_QUOTA_GB / SIGNED_URL_EXPIRY_SECONDS)", () => {
+  beforeEach(() => {
+    delete process.env.STORAGE_QUOTA_GB;
+    delete process.env.SIGNED_URL_EXPIRY_SECONDS;
+  });
+
+  test("mac dinh: quota 100GB, expiry 3600s", () => {
+    const env = getEnv();
+    expect(env.storageQuotaBytes).toBe(100 * 1024 * 1024 * 1024);
+    expect(env.signedUrlExpiry).toBe(3600);
+  });
+
+  test("so hop le duoc dung", () => {
+    process.env.STORAGE_QUOTA_GB = "5";
+    process.env.SIGNED_URL_EXPIRY_SECONDS = "600";
+    const env = getEnv();
+    expect(env.storageQuotaBytes).toBe(5 * 1024 * 1024 * 1024);
+    expect(env.signedUrlExpiry).toBe(600);
+  });
+
+  test("gia tri khong parse duoc -> THROW (fail closed, khong bao gio NaN)", () => {
+    for (const bad of ["unlimited", "n/a", " ", "abc"]) {
+      process.env.STORAGE_QUOTA_GB = bad;
+      expect(() => getEnv()).toThrow(/STORAGE_QUOTA_GB/);
+    }
+    process.env.STORAGE_QUOTA_GB = "100";
+    process.env.SIGNED_URL_EXPIRY_SECONDS = "forever";
+    expect(() => getEnv()).toThrow(/SIGNED_URL_EXPIRY_SECONDS/);
+  });
+
+  test("gia tri 0/duong -> THROW; expiry > 604800 bi clamp", () => {
+    process.env.STORAGE_QUOTA_GB = "0";
+    expect(() => getEnv()).toThrow(/STORAGE_QUOTA_GB/);
+    delete process.env.STORAGE_QUOTA_GB;
+    process.env.SIGNED_URL_EXPIRY_SECONDS = "999999999";
+    expect(getEnv().signedUrlExpiry).toBe(604800);
   });
 });

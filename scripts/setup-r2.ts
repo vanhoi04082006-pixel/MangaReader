@@ -58,37 +58,49 @@ async function main() {
   }
 
   // 3) Roundtrip test presigned PUT/GET (object-level permission)
-  const testKey = `_setup-test/roundtrip-${Date.now()}.txt`;
-  const testContent = `mangareader-r2-roundtrip-${Date.now()}`;
-  const putUrl = await presignPut({
-    key: testKey,
-    contentType: "text/plain",
-    expiresIn: 300,
-  });
-  const putRes = await fetch(putUrl, {
-    method: "PUT",
-    body: testContent,
-    headers: { "Content-Type": "text/plain" },
-  });
-  if (!putRes.ok) {
-    throw new Error(`Roundtrip PUT that bai: ${putRes.status} ${await putRes.text()}`);
-  }
-  console.log("[3/4] Presigned PUT (object): OK");
+  // CLEANUP LUON CHAY (finally) — contract giong verify-rls.ts: object test
+  // nay tao ra phai duoc xoa tren MOI exit path, va cleanup fail -> exit 1.
+  let testKey: string | null = null;
+  try {
+    testKey = `_setup-test/roundtrip-${Date.now()}.txt`;
+    const testContent = `mangareader-r2-roundtrip-${Date.now()}`;
+    const putUrl = await presignPut({
+      key: testKey,
+      contentType: "text/plain",
+      expiresIn: 300,
+    });
+    const putRes = await fetch(putUrl, {
+      method: "PUT",
+      body: testContent,
+      headers: { "Content-Type": "text/plain" },
+    });
+    if (!putRes.ok) {
+      throw new Error(`Roundtrip PUT that bai: ${putRes.status} ${await putRes.text()}`);
+    }
+    console.log("[3/4] Presigned PUT (object): OK");
 
-  const getUrl = await presignGet(testKey, 300);
-  const getRes = await fetch(getUrl);
-  const body = await getRes.text();
-  if (!getRes.ok || body !== testContent) {
-    throw new Error(`Roundtrip GET that bai: ${getRes.status}`);
-  }
-  console.log("[3/4] Presigned GET (object): OK (noi dung khop)");
-
-  // 4) Cleanup
-  const del = await deleteObjects([testKey]);
-  if (del.errors.length > 0) {
-    console.warn("[4/4] Cleanup canh bao:", del.errors);
-  } else {
-    console.log("[4/4] Cleanup test object: OK");
+    const getUrl = await presignGet(testKey, 300);
+    const getRes = await fetch(getUrl);
+    const body = await getRes.text();
+    if (!getRes.ok || body !== testContent) {
+      throw new Error(`Roundtrip GET that bai: ${getRes.status}`);
+    }
+    console.log("[3/4] Presigned GET (object): OK (noi dung khop)");
+  } finally {
+    if (testKey) {
+      const del = await deleteObjects([testKey]).catch((err) => ({
+        deleted: 0,
+        deletedKeys: [] as string[],
+        errors: [String(err)],
+      }));
+      if (del.errors.length > 0) {
+        console.error(`[4/4] CLEANUP LOI — object test con sot lai: ${testKey}`, del.errors);
+        console.error(`      XOA TAY: xoa object '${testKey}' tren R2 dashboard.`);
+        process.exitCode = 1;
+      } else {
+        console.log("[4/4] Cleanup test object: OK");
+      }
+    }
   }
 
   console.log("");

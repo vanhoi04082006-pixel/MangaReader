@@ -92,9 +92,12 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   }
 
   // ---- Supabase mode ----
-  // Chi cho phep duy nhat tai khoan admin (website ca nhan, khong co dang ky)
+  // Chi cho phep duy nhat tai khoan admin (website ca nhan, khong co dang ky).
+  // Tra ve DUNG thong bao giong sai mat khau de khong tao oracle enumeration
+  // dia chi email admin (403-vs-401 differential, WSTG-ATHN-02). Early return
+  // nay van giu email khac admin ra khoi bootstrap block o duoi.
   if (env.admin.email && email.trim().toLowerCase() !== env.admin.email) {
-    return fail("Tài khoản này không được phép truy cập hệ thống.", 403, "forbidden_account");
+    return fail("Email hoặc mật khẩu không đúng.", 401, "invalid_credentials");
   }
 
   // Bootstrap (lan dau): tao admin user neu chua ton tai (email_confirm = true).

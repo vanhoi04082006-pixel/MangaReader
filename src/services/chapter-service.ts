@@ -370,15 +370,29 @@ export async function finalizePages(input: PagesFinalizeInput) {
   });
 
   // ---- B4: Cleanup object bi thay the (ngoai transaction — safe) ----
-  if (replacedOldKeys.length > 0) {
-    await db.storageObject.updateMany({
-      where: { objectKey: { in: replacedOldKeys }, status: { in: ["PENDING", "CONFIRMED"] } },
-      data: { status: "DELETE_PENDING" },
-    }).catch(() => undefined);
-    const result = await safeDeleteObjects(replacedOldKeys);
-    await removeMetadataIfDeleted(result.removed).catch(() => undefined);
-    if (result.pending.length > 0) {
-      console.warn(`[chapter-service] ${result.pending.length} object thay the xoa that bai — DELETE_PENDING retry.`);
+  // CHI xoa key khong con duoc tham chieu SAU B3:
+  // (a) loai key duoc dung lai trong chinh batch nay (move/renumber);
+  // (b) re-check tham chieu page sau transaction (siblings: setMangaCover,
+  //     cleanupOrphanKeys deu re-check truoc khi safe-delete).
+  const batchKeys = new Set(input.pages.map((p) => p.objectKey));
+  const candidates = [...new Set(replacedOldKeys)].filter((k) => !batchKeys.has(k));
+  if (candidates.length > 0) {
+    const stillReferenced = await db.page.findMany({
+      where: { objectKey: { in: candidates } },
+      select: { objectKey: true },
+    });
+    const refSet = new Set(stillReferenced.map((r) => r.objectKey));
+    const toDelete = candidates.filter((k) => !refSet.has(k));
+    if (toDelete.length > 0) {
+      await db.storageObject.updateMany({
+        where: { objectKey: { in: toDelete }, status: { in: ["PENDING", "CONFIRMED"] } },
+        data: { status: "DELETE_PENDING" },
+      }).catch(() => undefined);
+      const result = await safeDeleteObjects(toDelete);
+      await removeMetadataIfDeleted(result.removed).catch(() => undefined);
+      if (result.pending.length > 0) {
+        console.warn(`[chapter-service] ${result.pending.length} object thay the xoa that bai — DELETE_PENDING retry.`);
+      }
     }
   }
 

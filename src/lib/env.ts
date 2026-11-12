@@ -54,6 +54,23 @@ export interface AdminIdentity {
   password?: string;
 }
 
+/**
+ * Parse so nguyen duong tu env, FAIL CLOSED khi gia tri khong hop le.
+ * Khong bao gio de NaN thuong qua so sanh (VD: quota) — mot bien so hoc
+ * sai phai bao loi ro rang thay vo hieu hoa control mot cach im lang.
+ */
+function positiveIntFromEnv(name: string, fallback: number): number {
+  const raw = str(name);
+  if (raw === undefined) return fallback;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(
+      `[env] ${name} phai la so nguyen duong (gia tri hien tai khong the parse duoc)`
+    );
+  }
+  return parsed;
+}
+
 export function getEnv() {
   const provider = effectiveAuthProvider();
   return {
@@ -78,9 +95,14 @@ export function getEnv() {
       endpoint: str("R2_ENDPOINT"),
     },
     appUrl: str("NEXT_PUBLIC_APP_URL") ?? "http://localhost:3000",
+    // Fail closed: gia tri khong parse duoc -> throw (khong bao gio NaN qua
+    // so sanh quota). SigV4 presign toi da 7 ngay (604800s).
     storageQuotaBytes:
-      (parseInt(str("STORAGE_QUOTA_GB", "100") ?? "100", 10)) * 1024 * 1024 * 1024,
-    signedUrlExpiry: parseInt(str("SIGNED_URL_EXPIRY_SECONDS", "3600") ?? "3600", 10),
+      positiveIntFromEnv("STORAGE_QUOTA_GB", 100) * 1024 * 1024 * 1024,
+    signedUrlExpiry: Math.min(
+      positiveIntFromEnv("SIGNED_URL_EXPIRY_SECONDS", 3600),
+      604800
+    ),
     isProd: process.env.NODE_ENV === "production",
   };
 }
