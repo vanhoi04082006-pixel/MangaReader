@@ -5,11 +5,25 @@
 //   bun run db:migrate:sqlite-to-postgres --apply --yes          (bo prompt)
 //   bun run db:migrate:sqlite-to-postgres --skip-test-data       (bo mangas [TEST-AUDIT]*)
 //
+// EXIT CODE: 0 = OK | 1 = FAIL | 2 = BLOCKED (bang dich chua tao / thieu env).
+//
 // MUC DICH: tao bang PostgreSQL (supabase/migrations/0001_init.sql) KHONG
 // tu dong chuyen du lieu SQLite cu. Tool nay chuyen TOAN BO du lieu that:
 // Profile, Manga, Chapter, Page, Genre, MangaGenre, Favorite,
 // ReadingProgress, ReadingHistory, StorageObject (giu nguyen UUID,
 // timestamp, khoa ngoai, so trang, R2 object key; Int -> BIGINT).
+//
+// DUONG DAN SQLITE (Windows/Linux/macOS — chay tu bat ky CWD nao):
+// - DATABASE_URL "file:..." duoc resolve THEO THU MUC CHUA SCHEMA PRISMA
+//   (prisma/) — dung goc resolution nhu Prisma client (xem src/lib/sqlite-url.ts).
+// - Ho tro: duong dan tuong doi, tuyet doi POSIX, o dia Windows (C:\... | C:/...),
+//   UNC (\\server\share), query parameter (?...) — khong bao gio tu tao
+//   file moi; file thieu / thieu bang Prisma -> LOI RO RANG, dung lai.
+//
+// HEADER CONTRACT (key Supabase — xem src/lib/supabase-keys.ts):
+// - Key moi sb_secret_... KHONG phai JWT -> chi gui o "apikey",
+//   KHONG gui lam "Authorization: Bearer".
+// - Key legacy (service_role JWT) -> gui ca apikey + Bearer (semantics cu).
 //
 // NGUYEN TAC AN TOAN:
 //  - Dry-run la MAC DINH; ghi that phai co --apply + xac nhan ro rang.
@@ -27,8 +41,16 @@
 // =============================================================
 
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { Database } from "bun:sqlite";
 import { S3Client, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { supabaseServiceHeaders } from "../src/lib/supabase-keys";
+import { resolveSqliteFile } from "../src/lib/sqlite-url";
+
+// Cua so lam viec co the khac goc repo — moi duong dan relative phai dua tren
+// vi tri CUA FILE SCRIPT nay, khong phai CWD.
+const REPO_ROOT = path.resolve(import.meta.dir, "..");
+const PRISMA_SCHEMA_PATH = path.join(REPO_ROOT, "prisma", "schema.prisma");
 
 // ---------------- CLI ----------------
 const args = process.argv.slice(2);
@@ -47,10 +69,11 @@ function flagValue(name: string): string | undefined {
 function loadEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   try {
-    const raw = readFileSync(".env", "utf8") as string;
+    // Doc .env o GOC REPO (khong phu thuoc CWD) — chay tu thu muc khac van dung.
+    const raw = readFileSync(path.join(REPO_ROOT, ".env"), "utf8") as string;
     for (const line of raw.split("\n")) {
       const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-      if (m) env[m[1]] = m[2].trim();
+      if (m) env[m[1]!] = m[2].trim();
     }
   } catch {
     /* dung process.env */
@@ -59,7 +82,6 @@ function loadEnv(): Record<string, string> {
 }
 const ENV = loadEnv();
 
-const SQLITE_URL = ENV.DATABASE_URL ?? "";
 const SB_URL = (flagValue("--url") ?? ENV.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/$/, "");
 const SK = flagValue("--service-key") ?? ENV.SUPABASE_SERVICE_SECRET_KEY ?? "";
 
@@ -69,15 +91,26 @@ const R2_SECRET_ACCESS_KEY = ENV.R2_SECRET_ACCESS_KEY ?? "";
 const R2_BUCKET = ENV.R2_BUCKET_NAME ?? "manga-storage";
 const R2_ENDPOINT = ENV.R2_ENDPOINT ?? "";
 
-if (!SQLITE_URL.startsWith("file:")) {
-  console.error("DATABASE_URL phai la file:... (SQLite nguon). Hien tai:", SQLITE_URL || "(trong)");
-  process.exit(1);
-}
 if (!SB_URL || !SK) {
   console.error("Thieu NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_SECRET_KEY (hoac --url/--service-key).");
+  process.exit(2);
+}
+
+// ---------------- Resolve duong dan SQLite (cung goc voi Prisma) ----------------
+const SQLITE_URL = ENV.DATABASE_URL ?? "";
+const sqliteFile = resolveSqliteFile(SQLITE_URL, PRISMA_SCHEMA_PATH);
+if (!sqliteFile.ok || !sqliteFile.path) {
+  console.error("LOI DUONG DAN SQLITE:");
+  console.error(sqliteFile.error ?? "DATABASE_URL khong hop le.");
+  console.error(`(CWD hien tai: ${process.cwd()} — tool resolve theo thu muc schema Prisma, giong Prisma client.)`);
   process.exit(1);
 }
-const SQLITE_PATH = SQLITE_URL.replace(/^file:/, "").replace(/\?.*$/, "");
+if (!sqliteFile.exists) {
+  console.error("LOI FILE SQLITE NGUON:");
+  console.error(sqliteFile.error);
+  process.exit(1);
+}
+const SQLITE_PATH = sqliteFile.path;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUuid(v: unknown): v is string {
@@ -96,14 +129,12 @@ function toIso(v: unknown): string | null {
   return null;
 }
 
-// ---------------- PostgREST helper ----------------
+// ---------------- PostgREST helper (header contract moi — xem supabase-keys.ts) ----------------
 async function pg(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>) {
   const res = await fetch(`${SB_URL}${path}`, {
     method,
     headers: {
-      apikey: SK,
-      Authorization: `Bearer ${SK}`,
-      "content-type": "application/json",
+      ...supabaseServiceHeaders(SK), // sb_secret_ -> chi apikey; legacy JWT -> apikey + Bearer
       ...(body !== undefined ? { Prefer: "resolution=ignore-duplicates" } : {}),
       ...(extraHeaders ?? {}),
     },
@@ -115,8 +146,7 @@ async function pg(method: string, path: string, body?: unknown, extraHeaders?: R
 async function pgCount(table: string): Promise<number | null> {
   const res = await fetch(`${SB_URL}/rest/v1/${table}?select=*&limit=1`, {
     headers: {
-      apikey: SK,
-      Authorization: `Bearer ${SK}`,
+      ...supabaseServiceHeaders(SK),
       Prefer: "count=exact",
       Range: "0-0",
     },
@@ -132,6 +162,32 @@ interface Row {
   [k: string]: unknown;
 }
 const sqlite = new Database(SQLITE_PATH, { readonly: true });
+
+// Xac minh DB nguon co bang Prisma ky vong truoc khi doc (chong mo SAI file:
+// file SQLite khac/rong se thieu bang -> loi ro rang, khong chuyen du lieu rac).
+const EXPECTED_TABLES = [
+  "Profile", "Genre", "Manga", "Chapter", "Page", "MangaGenre",
+  "Favorite", "ReadingProgress", "ReadingHistory", "StorageObject",
+];
+const presentTables = new Set(
+  (
+    sqlite
+      .query("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as Array<{ name: string }>
+  ).map((r) => r.name)
+);
+const missingTables = EXPECTED_TABLES.filter((t) => !presentTables.has(t));
+if (missingTables.length > 0) {
+  console.error("LOI: FILE SQLITE NGUON THIEU BANG PRISMA KY VONG:");
+  for (const t of missingTables) console.error(`  - ${t}`);
+  console.error(`File: ${SQLITE_PATH}`);
+  console.error(`Bang hien co: ${Array.from(presentTables).join(", ") || "(khong co bang nao)"}`);
+  console.error("-> Co the ban da tro DATABASE_URL den file SQLite SAI (file rong/cua du an khac).");
+  console.error("   Tool KHONG chuyen tu DB thieu bang. Kiem tra DATABASE_URL hoac chay \"bun run db:push\".");
+  sqlite.close();
+  process.exit(1);
+}
+
 function all(table: string): Row[] {
   return sqlite.query(`SELECT * FROM "${table}"`).all() as Row[];
 }
@@ -149,6 +205,8 @@ const storageObjects = all("StorageObject");
 
 console.log("=== MangaReader — SQLite -> PostgreSQL Migration ===");
 console.log(`Nguon (readonly) : ${SQLITE_PATH}`);
+console.log(`   (DATABASE_URL = ${SQLITE_URL}${sqliteFile.query ? ` ? ${sqliteFile.query}` : ""} — resolve theo ${path.dirname(PRISMA_SCHEMA_PATH)}, giong Prisma)`);
+console.log(`   Bang Prisma ky vong: ${EXPECTED_TABLES.length}/${EXPECTED_TABLES.length} deu ton tai`);
 console.log(`Dich (PostgREST) : ${SB_URL}`);
 console.log(`Che do           : ${APPLY ? "APPLY (ghi that)" : "DRY-RUN (khong ghi)"}`);
 console.log("");
@@ -342,10 +400,34 @@ for (const f of outFavorites) if (!mangaIds.has(f.manga_id)) errors.push(`favori
 for (const rp of outProgress) if (!chapterIds.has(rp.chapter_id)) errors.push(`reading_progress: chapter_id ${rp.chapter_id} khong ton tai`);
 for (const h of outHistory) if (!chapterIds.has(h.chapter_id)) errors.push(`reading_history: chapter_id ${h.chapter_id} khong ton tai`);
 
+// ---------------- Kiem tra bang DICH ton tai (fail nhanh truoc cac buoc mang) ----------------
+// (service key doc duoc — key moi: chi apikey; legacy: apikey + Bearer)
+const requiredTables = [
+  "profiles", "genres", "mangas", "chapters", "pages", "manga_genres",
+  "favorites", "reading_progress", "reading_history", "storage_objects",
+];
+for (const t of requiredTables) {
+  const res = await pg("GET", `/rest/v1/${t}?select=*&limit=1`);
+  if (res.status === 404 || res.text.includes("PGRST205")) {
+    console.error(`BLOCKED: Bang \`${t}\` CHUA TON TAI tren dich (${SB_URL}).`);
+    console.error("Hay chay supabase/migrations/0001_init.sql trong Supabase SQL Editor TRUOC.");
+    console.error("(Cac buoc xac minh Auth/R2 phia duoi chi chay khi dich da co bang — tiet kiem thoi gian.)");
+    sqlite.close();
+    process.exit(2);
+  }
+  if (res.status !== 200) {
+    console.error(`BLOCKED: Khong doc duoc bang \`${t}\` (status=${res.status}) — kiem tra service key / URL dich.`);
+    sqlite.close();
+    process.exit(2);
+  }
+}
+console.log("Bang dich ton tai (service key doc duoc): OK");
+console.log("");
+
 // ---------------- Xac minh profile ton tai trong Supabase Auth (FK auth.users) ----------------
 for (const p of outProfiles) {
   const res = await fetch(`${SB_URL}/auth/v1/admin/users/${p.id}`, {
-    headers: { apikey: SK, Authorization: `Bearer ${SK}` },
+    headers: supabaseServiceHeaders(SK),
   });
   if (res.status === 404) {
     errors.push(`profiles ${p.email} (${p.id}): KHONG ton tai trong Supabase Auth — FK auth.users se that bai. Bo dong nay hoac tao user Auth tuong ung.`);
@@ -404,30 +486,11 @@ console.log("");
 if (errors.length > 0) {
   console.error(`XAC MINH THAT BAI (${errors.length} loi):`);
   for (const e of errors) console.error(`  - ${e}`);
+  sqlite.close();
   process.exit(1);
 }
 for (const w of warnings) console.warn(`CANH BAO: ${w}`);
 console.log("Xac minh du lieu: OK (khong loi chan che).");
-console.log("");
-
-// ---------------- Kiem tra bang dich ton tai (phai chay migration SQL truoc) ----------------
-const requiredTables = [
-  "profiles", "genres", "mangas", "chapters", "pages", "manga_genres",
-  "favorites", "reading_progress", "reading_history", "storage_objects",
-];
-for (const t of requiredTables) {
-  const res = await pg("GET", `/rest/v1/${t}?select=*&limit=1`);
-  if (res.status === 404 || res.text.includes("PGRST205")) {
-    console.error(`BLOCKED: Bang \`${t}\` CHUA TON TAI tren dich (${SB_URL}).`);
-    console.error("Hay chay supabase/migrations/0001_init.sql trong Supabase SQL Editor TRUOC.");
-    process.exit(1);
-  }
-  if (res.status !== 200) {
-    console.error(`BLOCKED: Khong doc duoc bang \`${t}\` (status=${res.status}) — kiem tra service key / URL dich.`);
-    process.exit(1);
-  }
-}
-console.log("Bang dich ton tai (service key doc duoc): OK");
 console.log("");
 
 // ---------------- DRY-RUN ket thuc o day ----------------

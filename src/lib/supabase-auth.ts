@@ -2,9 +2,20 @@
 // Supabase Auth (REST API truc tiep - khong can supabase-js)
 // Chi chay phia server.
 // Docs: https://supabase.com/docs/reference/api/auth
+//
+// HEADER CONTRACT (xem src/lib/supabase-keys.ts):
+// - Key moi (sb_publishable_/sb_secret_) KHONG phai JWT -> chi gui o "apikey";
+//   KHONG bao gio gui key moi lam "Authorization: Bearer".
+// - Key legacy (anon/service_role JWT) -> gui ca apikey + Bearer (semantics cu).
+// - Request user: apikey = publishable + Bearer = access token JWT THAT cua user.
 // =============================================================
 
 import { getEnv } from "@/lib/env";
+import {
+  supabaseAnonHeaders,
+  supabaseServiceHeaders,
+  supabaseUserHeaders,
+} from "@/lib/supabase-keys";
 
 export interface SupabaseSession {
   access_token: string;
@@ -24,15 +35,26 @@ export class SupabaseAuthError extends Error {
   }
 }
 
-function headers(publishable: boolean) {
+/** Headers cho request anon (login/refresh) — publishable key theo format phat hien. */
+function anonHeaders() {
   const env = getEnv();
-  const key = publishable ? env.supabase.publishableKey : env.supabase.serviceKey;
-  if (!env.supabase.url || !key) {
+  if (!env.supabase.url || !env.supabase.publishableKey) {
     throw new SupabaseAuthError("Supabase chưa được cấu hình (thiếu biến môi trường)", 500, "config_missing");
   }
   return {
-    apikey: key,
-    Authorization: `Bearer ${key}`,
+    ...supabaseAnonHeaders(env.supabase.publishableKey),
+    "Content-Type": "application/json",
+  };
+}
+
+/** Headers cho request privileged (admin API) — secret key theo format phat hien. */
+function serviceHeaders() {
+  const env = getEnv();
+  if (!env.supabase.url || !env.supabase.serviceKey) {
+    throw new SupabaseAuthError("Supabase chưa được cấu hình (thiếu biến môi trường)", 500, "config_missing");
+  }
+  return {
+    ...supabaseServiceHeaders(env.supabase.serviceKey),
     "Content-Type": "application/json",
   };
 }
@@ -57,13 +79,13 @@ function friendlyError(body: Record<string, unknown>, status: number): SupabaseA
   return new SupabaseAuthError(message, status, code);
 }
 
-async function post<T>(path: string, body: unknown, publishable: boolean): Promise<T> {
+async function post<T>(path: string, body: unknown, privileged: boolean): Promise<T> {
   const env = getEnv();
   let res: Response;
   try {
     res = await fetch(`${env.supabase.url}${path}`, {
       method: "POST",
-      headers: headers(publishable),
+      headers: privileged ? serviceHeaders() : anonHeaders(),
       body: JSON.stringify(body),
       cache: "no-store",
     });
@@ -75,14 +97,14 @@ async function post<T>(path: string, body: unknown, publishable: boolean): Promi
   return data as T;
 }
 
-/** Dang nhap bang email/password -> session */
+/** Dang nhap bang email/password -> session (request anon — publishable key) */
 export async function sbPasswordGrant(email: string, password: string): Promise<SupabaseSession> {
-  return post<SupabaseSession>("/auth/v1/token?grant_type=password", { email, password }, true);
+  return post<SupabaseSession>("/auth/v1/token?grant_type=password", { email, password }, false);
 }
 
-/** Refresh session bang refresh token */
+/** Refresh session bang refresh token (request anon — publishable key) */
 export async function sbRefreshGrant(refreshToken: string): Promise<SupabaseSession> {
-  return post<SupabaseSession>("/auth/v1/token?grant_type=refresh_token", { refresh_token: refreshToken }, true);
+  return post<SupabaseSession>("/auth/v1/token?grant_type=refresh_token", { refresh_token: refreshToken }, false);
 }
 
 /** Xac minh access token -> user, null neu het han/khong hop le */
@@ -92,10 +114,8 @@ export async function sbGetUser(accessToken: string): Promise<{ id: string; emai
   let res: Response;
   try {
     res = await fetch(`${env.supabase.url}/auth/v1/user`, {
-      headers: {
-        apikey: env.supabase.publishableKey,
-        Authorization: `Bearer ${accessToken}`,
-      },
+      // apikey = publishable key + Bearer = access token THAT cua user
+      headers: supabaseUserHeaders(env.supabase.publishableKey, accessToken),
       cache: "no-store",
     });
   } catch {
@@ -119,7 +139,7 @@ export async function sbAdminGetUserByEmail(
   try {
     res = await fetch(
       `${env.supabase.url}/auth/v1/admin/users?email=${encodeURIComponent(email)}`,
-      { headers: headers(false), cache: "no-store" }
+      { headers: serviceHeaders(), cache: "no-store" }
     );
   } catch {
     throw new SupabaseAuthError("Không kết nối được Supabase (lỗi mạng hoặc URL)", 503, "network");
@@ -133,7 +153,7 @@ export async function sbAdminGetUserByEmail(
   return found ? { id: found.id, email: found.email } : null;
 }
 
-/** Tao user admin (dung bootstrap) — email_confirm = true */
+/** Tao user admin (dung bootstrap) — email_confirm = true (admin API — secret key) */
 export async function sbAdminCreateUser(
   email: string,
   password: string
@@ -141,7 +161,7 @@ export async function sbAdminCreateUser(
   const data = await post<{ id: string; email?: string }>(
     "/auth/v1/admin/users",
     { email, password, email_confirm: true },
-    false
+    true
   );
   return { id: data.id, email: data.email };
 }
@@ -174,8 +194,7 @@ export async function sbRevokeSessionStatus(accessToken: string): Promise<Revoke
     const res = await fetch(`${env.supabase.url}/auth/v1/logout`, {
       method: "POST",
       headers: {
-        apikey: env.supabase.publishableKey ?? "",
-        Authorization: `Bearer ${accessToken}`,
+        ...supabaseUserHeaders(env.supabase.publishableKey ?? "", accessToken),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({}),

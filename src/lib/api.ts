@@ -138,13 +138,17 @@ export async function requireAdminMutation(req: NextRequest): Promise<SessionUse
 
 /**
  * Guard cho thao tac PHA HOAI (xoa truyen/chapter/trang, cleanup storage):
- * CSRF + admin + xac minh session TRUC TIEP voi Supabase (khong qua cache 90s).
+ * CSRF + admin + xac minh session UY QUYEN (khong qua cache 90s).
  *
- * Ly do: cache xac minh chi ton tai tren runtime instance hien tai (globalThis);
- * tren Vercel moi serverless instance co cache rieng — logout khong the xoa
- * cache cua tat ca instance. Xac minh truc tiep: Supabase /auth/v1/user tu choi
- * access token cua session da revoke (claim session_id) -> thao tac xoa khong
- * the duoc thuc hien bang token da logout, tren BAT KY instance nao.
+ * Xac minh gom 2 lop (xem getSessionUserStrict + src/lib/session-verify.ts):
+ * 1. GET /auth/v1/user truc tiep voi access token (danh tinh + het han;
+ *    tren du an nay GoTrue con tu choi token cua session da revoke —
+ *    403 session_not_found, chung minh bang thu nghiem thuc).
+ * 2. Doc bang auth.sessions qua Prisma (postgres role, tham so hoa) —
+ *    session phai con ton tai + thuoc dung user. Ket qua khong xac dinh
+ *    duoc -> TU CHOI (fail closed). Doc truc tiep DB (khong qua cache
+ *    instance) -> chong duoc replay token da logout tren BAT KY runtime
+ *    instance nao (Vercel multi-instance).
  */
 export async function requireAdminDestructive(req: NextRequest): Promise<SessionUser> {
   assertSameOrigin(req);

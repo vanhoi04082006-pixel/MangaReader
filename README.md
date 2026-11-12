@@ -110,8 +110,8 @@ bun run dev                   # http://localhost:3000  (Windows: bun run dev:win
 | `bun run db:push` | Áp schema SQLite cho dev (không mất dữ liệu) |
 | `bun run db:generate` / `db:generate:pg` | Sinh Prisma client (SQLite / PostgreSQL) |
 | `bun run scripts/bootstrap-admin.ts` | Bootstrap tài khoản admin (in UUID cho `ADMIN_USER_ID`) |
-| `bun run verify:rls` (`scripts/verify-rls.ts`) | Kiểm tra RLS qua PostgREST (chạy sau migration) — tách apikey/bearer, xác minh session non-admin thật |
-| `bun run db:migrate:sqlite-to-postgres` | Chuyển dữ liệu SQLite dev → PostgreSQL (dry-run mặc định; `--apply` để ghi) |
+| `bun run verify:rls` (`scripts/verify-rls.ts`) | Kiểm tra **hợp đồng API key Supabase + RLS** qua PostgREST. Phase A (không cần bảng): key mới `sb_*` không-Bearer được chấp nhận, key sai 401, user JWT rác bị từ chối. Phase C (sau migration): anon + non-admin bị từ chối, service key đọc/ghi được — tạo user Supabase tạm + dòng test riêng, **luôn xóa sạch sau** (cleanup không bị `process.exit` bỏ qua; exit 0 PASS / 1 FAIL / 2 BLOCKED) |
+| `bun run db:migrate:sqlite-to-postgres` | Chuyển dữ liệu SQLite dev → PostgreSQL (dry-run mặc định; `--apply` để ghi). Đường dẫn SQLite resolve theo thư mục schema Prisma — đúng trên Windows/Linux/macOS và mọi CWD; không tự tạo file mới |
 | `bun run scripts/setup-r2.ts` | Kiểm tra bucket + CORS + roundtrip presign |
 
 ---
@@ -130,7 +130,7 @@ bun run dev                   # http://localhost:3000  (Windows: bun run dev:win
 
    **Vòng đời `ADMIN_PASSWORD` (bootstrap-only)**: biến này chỉ cần lúc tạo tài khoản lần đầu. Sau khi tài khoản đã tồn tại trong Supabase Auth: (1) đổi mật khẩu tại Authentication > Users, (2) **xóa `ADMIN_PASSWORD`** khỏi env production. Login/refresh/logout/readiness hoạt động bình thường không cần nó — mật khẩu do Supabase Auth quản lý. Ứng dụng không bao giờ tạo lại/reset tài khoản admin đã tồn tại.
 4. **Chạy migration SQL** (production): mở **SQL Editor**, dán toàn bộ `supabase/migrations/0001_init.sql`, Run. Migration tạo 12 bảng (10 bảng dữ liệu + `app_config` + `rate_limit_hits`), bật RLS **admin-only** và seed `app_config.admin_user_id`.
-5. Xác minh RLS: `bun run verify:rls` (anon + non-admin bị từ chối — script tạo user Supabase tạm + dòng test riêng, xóa sạch sau).
+5. Xác minh RLS: `bun run verify:rls` (Phase A kiểm tra key chạy được ngay cả trước migration; phần RLS cần bảng — anon + non-admin bị từ chối, script tạo user Supabase tạm + dòng test riêng, xóa sạch sau).
 6. **Chuyển dữ liệu SQLite dev sang PostgreSQL** (nếu cần giữ dữ liệu cũ): `bun run db:migrate:sqlite-to-postgres` (dry-run trước, `--apply` khi chắc chắn — xem chi tiết trong script).
 7. `ADMIN_USER_ID` **bắt buộc trong production**: readiness (`/api/health/ready`) báo degraded nếu thiếu, sai định dạng UUID, hoặc không khớp `app_config.admin_user_id`.
 
@@ -241,12 +241,13 @@ Chi tiết đầy đủ mọi kiểm soát + bằng chứng kiểm thử: `docs/
 
 ```bash
 bun run dev                    # integration test cần server đang chạy
-bun test                       # 59 test: 22 unit + 37 integration
+bun test tests/                # 114 test: 60 unit + 54 integration
 ```
 
-- **Unit**: provider fail-closed, ranh giới admin identity, CSRF, JWT expiry, ZIP hardening (bomb/caps).
-- **Integration** (chạy với Supabase + R2 thật): login đúng/sai/non-admin, user Supabase thứ 2 bị 403 ở mọi API bảo vệ, CSRF cross-site, upload roundtrip thật (presign → R2 → finalize verify → xóa đồng bộ), giới hạn proxy, abort an toàn, logout revoke, rate limit 429.
+- **Unit**: provider fail-closed, ranh giới admin identity, CSRF, JWT expiry, ZIP hardening (bomb/caps), **hợp đồng header key Supabase (sb_* mới + legacy JWT)**, resolve đường dẫn SQLite (Windows/UNC/query param), JWT payload/session_id, luồng verify-rls (cleanup luôn chạy — fetch mock).
+- **Integration** (chạy với Supabase + R2 thật): login đúng/sai/non-admin, user Supabase thứ 2 bị 403 ở mọi API bảo vệ, CSRF cross-site, upload roundtrip thật (presign → R2 → finalize verify → xóa đồng bộ), giới hạn proxy, abort an toàn, logout revoke, **revocation cross-runtime (replay token ở tiến trình riêng sau logout bị từ chối; token revoked không DELETE/cleanup/mutation được)**, rate limit 429.
 - Test không chạm dữ liệu thật: tạo/xóa dữ liệu riêng; user Supabase tạm được xóa sau test; bảng rate limit được reset trước mỗi lần chạy.
+- Ghi chú: `bun test tests/` chạy cả 2 file trong 1 process — file unit đã snapshot/hoàn nguyên env để không rò rỉ cấu hình sang file integration.
 
 ---
 

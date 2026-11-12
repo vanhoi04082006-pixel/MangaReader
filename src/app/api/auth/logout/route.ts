@@ -15,14 +15,20 @@
 // 7. Logout lap lai (khong token)           -> 200 nhu thuong (idempotent).
 //
 // LUU Y VE CUA SO HIEU LUC (chan thuc — chi tiet trong bao cao audit):
-// - Supabase /auth/v1/logout revoke session family (kem refresh tokens).
-// - Access token JWT chua claim session_id: /auth/v1/user TU CHOI token cua
-//   session da revoke -> xac minh moi request phat hien revoke ngay (da test).
-// - Cache xac minh 90s chi ton tai tren runtime instance nay (globalThis) —
-//   tren Vercel moi serverless instance co cache rieng; logout chi xoa duoc
-//   cache cua instance xu ly no. Vi vay cac thao tac PHA HOAI (xoa truyen/
-//   chapter/trang, cleanup) dung requireAdminDestructive (xac minh truc tiep,
-//   khong cache) de khong phu thuoc vao cache instance nao.
+// - Supabase /auth/v1/logout revoke session family (kem refresh tokens):
+//   GoTrue XOA row session trong auth.sessions. Chung minh thuc tren du an
+//   nay: replay access token sau logout -> 403 session_not_found; replay
+//   refresh token cu -> 400 refresh_token_not_found.
+// - Access token JWT la stateless: theo tai lieu Supabase, tren mot so
+//   phien ban/cau hinh GoTrue no co the VAN CON HIEU LUC den khi het han.
+//   Vi vay cac thao tac PHA HOAI (xoa truyen/chapter/trang, cleanup) dung
+//   requireAdminDestructive = /auth/v1/user truc tiep + kiem tra UY QUYEN
+//   bang auth.sessions (Prisma postgres role — xem src/lib/session-verify.ts),
+//   khong phu thuoc cache instance nao.
+// - Cache xac minh 90s (globalThis) chi ton tai tren instance xu ly logout —
+//   CAC INSTANCE KHAC khong bi xoa cache; cua so 90s chi anh huong cac route
+//   dung cache (doc thuong/mutation thong thuong), KHONG anh huong route
+//   destructive.
 import { NextRequest, NextResponse } from "next/server";
 import { ok, withErrorHandling, assertSameOrigin } from "@/lib/api";
 import { getEnv } from "@/lib/env";

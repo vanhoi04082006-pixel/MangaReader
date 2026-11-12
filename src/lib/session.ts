@@ -13,6 +13,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getEnv, type AuthProvider } from "@/lib/env";
 import { sbGetUser, SupabaseAuthError } from "@/lib/supabase-auth";
+import { verifyActiveSession } from "@/lib/session-verify";
 
 export const ACCESS_COOKIE = "tsundoku_at";
 export const REFRESH_COOKIE = "tsundoku_rt";
@@ -62,8 +63,13 @@ function localJwtVerify(token: string, secret: string): Record<string, unknown> 
 
 // ---------------- Cache xac minh token Supabase ---------------
 // Giam so lan goi mang: cache 90s theo hash cua token.
-// Cua so bao mat 90s la thoi diem toi da ma 1 token bi revoke
-// van co the duoc chap nhan (logout se xoa cache ngay).
+//
+// GIOI HAN (ghi chan than): cache chi ton tai tren runtime instance HIEN TAI
+// (globalThis). Logout xoa cache cua instance xu ly logout — KHONG xoa duoc
+// cache cua cac instance Vercel khac. Nghia la: access token da revoke nhung
+// con han co the duoc chap nhan toi da 90s tren instance khac cho cac route
+// dung cache nay. Cac thao tac PHA HOAI phai dung getSessionUserStrict
+// (khong cache + kiem tra auth.sessions uy quyen) — xem comment o duoi.
 //
 // LUU KY THUAT: cache dat tren globalThis de TAT CA route bundle chia se
 // CUNG 1 instance (Turbopack dev co the tao instance rieng tung route —
@@ -155,20 +161,33 @@ export async function getSessionUser(req: NextRequest): Promise<SessionUser | nu
 }
 
 /**
- * Xac minh session KHONG qua cache — goi truc tiep Supabase moi lan.
+ * Xac minh session KHONG qua cache — danh cho thao tac PHA HOAI (xoa truyen/
+ * chapter/trang, cleanup storage) va cac thao tac nhay cam tuong duong.
  *
- * Dung cho cac thao tac pha hoai (DELETE truyen/chapter/trang, cleanup storage):
- * - Supabase /auth/v1/user tu choi access token cua session da revoke
- *   (access token JWT co claim session_id; GoTrue kiem tra against danh sach
- *   session da revoke) -> xac minh truc tiep = trang thai uy quyen NHANH NHAT.
- * - Cache 90s chi ton tai tren 1 runtime instance (globalThis) — tren Vercel
- *   serverless moi instance co cache rieng, logout chi xoa duoc cache cua
- *   instance xu ly logout. Bien the strict loai bo cua so nay cho thao tac
- *   khong the hoan tac.
+ * HAI LOP xac minh (defense-in-depth):
+ * 1. GET /auth/v1/user voi access token (danh tinh + het han). Tren du an
+ *    nay GoTrue con kiem tra claim session_id -> replay sau logout bi
+ *    403 session_not_found (chung minh bang thu nghiem thuc). NHUNG theo
+ *    tai lieu Supabase, access-token JWT co the con hieu luc den khi het
+ *    han sau sign-out tren mot so phien ban/cau hinh — KHONG gia dinh cho
+ *    moi deployment.
+ * 2. Kiem tra UY QUYEN: doc bang auth.sessions (qua Prisma postgres role,
+ *    tham so hoa, KHONG qua PostgREST cong khai) — session_id phai con
+ *    ton tai + thuoc dung user + chua het han tuyet doi (xem
+ *    src/lib/session-verify.ts). Ket qua "unavailable" -> TU CHOI (fail
+ *    closed). Dev tren SQLite khong co schema auth -> bo lop 2 (da ghi chu).
  *
- * Compromise con lai (da ghi chan hon tai bao cao): access token JWT con han
- *   (chua revoke) van hop le den khi het han hoac bi revoke — dieu nay dung
- *   theo thiet ke cua JWT; ranh gioi that la do Supabase quan ly session.
+ * VE CACHE PHIEN BAN: cache 90s (globalThis) chi ton tai tren 1 runtime
+ * instance — logout XOA cache cua instance xu ly no, KHONG xoa duoc cache
+ * cua cac instance Vercel khac. Bien the strict KHONG doc cache, dong thoi
+ * 2 lop xac minh tren deu goi Supabase/DB truc tiep -> phat hien revoke
+ * ngay tren BAT KY instance nao, khong phu thuoc cache.
+ *
+ * CUA SO CON LAI (da ghi chan than trong bao cao): voi cac route KHONG dung
+ * bien the strict (doc thuong, mutation thong thuong — cache 90s), access
+ * token da revoke nhung con han co the duoc chap nhan toi da 90s tren cac
+ * instance khac. Day la compromise thiet ke (JWT stateless + hieu nang);
+ * ranh gioi that do auth.sessions cua Supabase quan ly.
  */
 export async function getSessionUserStrict(req: NextRequest): Promise<SessionUser | null> {
   const env = getEnv();
@@ -180,7 +199,19 @@ export async function getSessionUserStrict(req: NextRequest): Promise<SessionUse
 
   if (env.authProvider === "supabase") {
     const user = await sbGetUser(token); // KHONG doc/ghi cache
-    return user ? { id: user.id, email: user.email ?? "" } : null;
+    if (!user) return null;
+    // Lop 2: kiem tra session con song trong auth.sessions (uy quyen).
+    // "inactive" = da logout; "unavailable" = khong xac minh duoc -> fail closed.
+    const liveness = await verifyActiveSession(token, user.id);
+    if (liveness !== "active") {
+      if (liveness === "unavailable") {
+        console.error(
+          "[session] STRICT verification UNAVAILABLE (auth.sessions khong doc duoc / thieu claim session_id) — tu choi thao tac (fail closed)."
+        );
+      }
+      return null;
+    }
+    return { id: user.id, email: user.email ?? "" };
   }
 
   // local mode (chi development) — JWT verify local, khong co cache

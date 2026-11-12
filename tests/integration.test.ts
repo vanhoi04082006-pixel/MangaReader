@@ -14,8 +14,28 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import {
+  supabaseAnonHeaders,
+  supabaseServiceHeaders,
+  supabaseUserHeaders,
+} from "../src/lib/supabase-keys";
+import { resolveSqliteFile } from "../src/lib/sqlite-url";
 
-const BASE = "http://localhost:3000";
+/** Dev server mac dinh 3000; override bang TEST_BASE_URL (vd chay audit tren 3001). */
+const BASE = ((ENV_TEST_BASE_URL()) ?? "http://localhost:3000").replace(/\/$/, "");
+function ENV_TEST_BASE_URL(): string | undefined {
+  try {
+    const raw = readFileSync(".env", "utf8");
+    for (const line of raw.split("\n")) {
+      const m = line.match(/^TEST_BASE_URL=(.*)$/);
+      if (m) return m[1]!.trim();
+    }
+  } catch {
+    /* khong co .env */
+  }
+  return process.env["TEST_BASE_URL"];
+}
 
 // ---- Doc .env ----
 function loadEnv(): Record<string, string> {
@@ -58,7 +78,7 @@ class CookieJar {
   }
 }
 
-const ORIGIN = "http://localhost:3000"; // same-origin hop le
+const ORIGIN = BASE; // same-origin hop le — PHAI trung voi BASE (server audit co the chay tren 3001)
 
 async function api(
   method: string,
@@ -99,15 +119,19 @@ beforeAll(async () => {
   if (!ADMIN_PASSWORD) throw new Error("Thiếu ADMIN_PASSWORD trong .env — khong the chay integration test");
   if (!SUPABASE_SK) throw new Error("Thiếu SUPABASE_SERVICE_SECRET_KEY — khong the test second user");
 
-  // Reset bang rate limit (chi SQLite dev) de test lap lai duoc — khong anh huong du lieu
+  // Reset bang rate limit (chi SQLite dev) de test lap lai duoc — khong anh huong du lieu.
+  // DUONG DAN resolve theo thu muc schema Prisma (giong app/Prisma client) —
+  // dung du ca khi chay test tu thu muc khac (xem src/lib/sqlite-url.ts).
   if ((ENV.DATABASE_URL ?? "").startsWith("file:")) {
     try {
       const { Database } = await import("bun:sqlite");
-      const dbPath = (ENV.DATABASE_URL ?? "").replace(/^file:/, "");
-      const sqlite = new Database(dbPath);
+      const schemaPath = path.resolve(import.meta.dir, "..", "prisma", "schema.prisma");
+      const resolved = resolveSqliteFile(ENV.DATABASE_URL ?? "", schemaPath);
+      if (!resolved.ok || !resolved.path) throw new Error(resolved.error ?? "DATABASE_URL khong hop le");
+      const sqlite = new Database(resolved.path);
       sqlite.run('DELETE FROM "RateLimitHit"');
       sqlite.close();
-      console.log("[test] Rate limit table cleared (SQLite dev)");
+      console.log(`[test] Rate limit table cleared (SQLite dev: ${resolved.path})`);
     } catch (err) {
       console.warn("[test] Khong xoa duoc rate limit table:", (err as Error).message);
     }
@@ -120,7 +144,7 @@ afterAll(async () => {
     if (secondUserId) {
       await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${secondUserId}`, {
         method: "DELETE",
-        headers: { apikey: SUPABASE_SK, Authorization: `Bearer ${SUPABASE_SK}` },
+        headers: supabaseServiceHeaders(SUPABASE_SK),
       });
     }
   } catch {
@@ -288,7 +312,7 @@ describe("5. Second Supabase user (non-admin) — authorization boundary", () =>
   test("tao user Supabase thu 2 (tam thoi)", async () => {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
       method: "POST",
-      headers: { apikey: SUPABASE_SK, Authorization: `Bearer ${SUPABASE_SK}`, "content-type": "application/json" },
+      headers: { ...supabaseServiceHeaders(SUPABASE_SK), "content-type": "application/json" },
       body: JSON.stringify({ email: TEST_EMAIL, password: TEST_PASSWORD, email_confirm: true }),
     });
     expect(res.status).toBe(200);
@@ -305,10 +329,11 @@ describe("5. Second Supabase user (non-admin) — authorization boundary", () =>
   });
 
   test("second user call API truc tiep bang Bearer token (bypass login) -> 403", async () => {
-    // Lay access token truc tiep tu Supabase (session that, khong qua app)
+    // Lay access token truc tiep tu Supabase (session that, khong qua app) —
+    // header contract: apikey = publishable key (key moi KHONG gui lam Bearer)
     const grant = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
       method: "POST",
-      headers: { apikey: SUPABASE_PK, Authorization: `Bearer ${SUPABASE_PK}`, "content-type": "application/json" },
+      headers: { ...supabaseAnonHeaders(SUPABASE_PK), "content-type": "application/json" },
       body: JSON.stringify({ email: TEST_EMAIL, password: TEST_PASSWORD }),
     });
     expect(grant.status).toBe(200);
@@ -340,7 +365,7 @@ describe("5. Second Supabase user (non-admin) — authorization boundary", () =>
     if (!secondUserId) return;
     const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${secondUserId}`, {
       method: "DELETE",
-      headers: { apikey: SUPABASE_SK, Authorization: `Bearer ${SUPABASE_SK}` },
+      headers: supabaseServiceHeaders(SUPABASE_SK),
     });
     expect(res.status).toBe(200);
     secondUserId = null;
@@ -1028,11 +1053,147 @@ describe("8. Logout & session revocation (day du cac truong hop)", () => {
 });
 
 // =============================================================
+describe("8b. Cross-runtime session revocation & revoked-token enforcement", () => {
+  // YEU CAU (audit pass 3): chung minh revocation la SERVER-SIDE (Supabase),
+  // khong phai cache local cua dev server:
+  //  - Replay access token trong MOT TIEN TRINH BUN RIENG (bun -e) — heap
+  //    rieng, globalThis rieng. Neu token bi tu choi o do thi do trang thai
+  //    that phia Supabase (auth.sessions), KHONG the la cache cua app.
+  //  - Goi API app bang Bearer (khong cookie) de kiem tra enforcement:
+  //    DELETE manga (destructive), cleanup storage (destructive), mutation
+  //    thong thuong, JWT rac, refresh token da tieu thu.
+  // LUU Y: section nay dung DUNG 2 login (ngan sach rate limit 10 lan/15 phut
+  // da gan het sau cac section truoc — section 9 burn rate limit phia sau).
+
+  let accessToken = "";
+
+  /** GET /auth/v1/user trong tien trinh bun RIENG — tra HTTP status. */
+  async function replayInSeparateProcess(token: string): Promise<number> {
+    const code = [
+      "(async () => {",
+      "  const r = await fetch(process.env.SB_URL + '/auth/v1/user', {",
+      "    headers: { apikey: process.env.SB_PK, Authorization: 'Bearer ' + process.env.SB_AT },",
+      "  });",
+      "  console.log(r.status);",
+      "})();",
+    ].join("\n");
+    const proc = Bun.spawn(["bun", "-e", code], {
+      env: { ...process.env, SB_URL: SUPABASE_URL, SB_PK: SUPABASE_PK, SB_AT: token },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+    const status = parseInt((out.trim().split("\n").pop() ?? "0"), 10);
+    if (Number.isNaN(status)) throw new Error(`Subprocess khong tra duoc status (output=${JSON.stringify(out.slice(0, 200))})`);
+    return status;
+  }
+
+  test("8b.0 login + token hop le khi goi TRUC TIEP Supabase va o TIEN TRINH RIENG (baseline)", async () => {
+    const login = await api("POST", "/api/auth/login", {
+      json: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+    });
+    expect(login.status).toBe(200);
+    jar.absorb(login);
+    accessToken = jar.jar.get("tsundoku_at") ?? "";
+    expect(accessToken.length).toBeGreaterThan(20);
+
+    // Direct Supabase: apikey = publishable + Bearer = access token THAT (header contract)
+    const direct = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: supabaseUserHeaders(SUPABASE_PK, accessToken),
+    });
+    expect(direct.status).toBe(200);
+
+    // Cross-process baseline: tien trinh rieng cung phai duoc chap nhan
+    // (neu baseline fail thi cac assertion revocation phia sau vo nghia).
+    const st = await replayInSeparateProcess(accessToken);
+    expect(st).toBe(200);
+  });
+
+  test("8b.1 logout (instance A) -> replay access token o TIEN TRINH RIENG bi tu choi", async () => {
+    const res = await api("POST", "/api/auth/logout", { cookies: jar });
+    expect(res.status).toBe(200);
+    jar.absorb(res);
+
+    // Tien trinh rieng: heap/globalThis rieng -> ket qua chi phu thuoc trang
+    // thai SERVER cua Supabase (auth.sessions), khong phai cache cua app.
+    const st = await replayInSeparateProcess(accessToken);
+    expect([401, 403]).toContain(st);
+  });
+
+  test("8b.2 token da revoke KHONG delete duoc manga (DELETE /api/mangas/:id -> 401)", async () => {
+    const res = await api("DELETE", `/api/mangas/${crypto.randomUUID()}`, {
+      bearer: accessToken,
+      origin: null,
+    });
+    expect(res.status).toBe(401); // 401 (auth) phai den TRUOC 404 (id khong ton tai)
+  });
+
+  test("8b.3 token da revoke KHONG chay duoc storage cleanup (POST /api/storage/cleanup -> 401)", async () => {
+    const res = await api("POST", "/api/storage/cleanup", {
+      bearer: accessToken,
+      origin: null,
+      json: { mode: "pending", dryRun: true },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("8b.4 token da revoke KHONG thuc hien duoc mutation thong thuong (POST /api/mangas -> 401)", async () => {
+    const res = await api("POST", "/api/mangas", {
+      bearer: accessToken,
+      origin: null,
+      json: { title: "[RLS-VERIFY] revoked token — phai bi chan" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("8b.5 JWT rac (khong chu ky hop le) -> 401 (Supabase tu choi, app truyen qua)", async () => {
+    const res = await api("GET", "/api/mangas", {
+      bearer: "eyJhbGciOiJIUzI1NiJ9.garbage-payload.sig",
+      origin: null,
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("8b.6 session admin DANG SONG van lam viec + refresh token da tieu thu (logout) khong reuse duoc", async () => {
+    // (a) Login moi — session DANG SONG phai lam viec binh thuong (valid active admin session)
+    const login = await api("POST", "/api/auth/login", {
+      json: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+    });
+    expect(login.status).toBe(200);
+    jar.absorb(login);
+    const freshRt = jar.jar.get("tsundoku_rt") ?? "";
+    expect(freshRt.length).toBeGreaterThan(10);
+
+    const create = await api("POST", "/api/mangas", {
+      cookies: jar,
+      json: { title: "[TEST-AUDIT] 8b.6 active session check" },
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { id: string };
+    const del = await api("DELETE", `/api/mangas/${created.id}`, { cookies: jar });
+    expect([200, 204]).toContain(del.status);
+
+    // (b) Logout: server refresh-then-revoke -> RT vua lay da bi tieu thu
+    //     (rotation) + session moi bi revoke -> replay RT cu PHAI FAIL.
+    const out = await api("POST", "/api/auth/logout", { cookies: jar });
+    expect(out.status).toBe(200);
+    jar.absorb(out);
+
+    const reuse = await fetch(`${BASE}/api/auth/refresh`, {
+      method: "POST",
+      headers: { origin: ORIGIN, cookie: `tsundoku_rt=${freshRt}` },
+    });
+    expect([400, 401]).toContain(reuse.status);
+  });
+});
+
+// =============================================================
 describe("9. Rate limit login (chay CUOI — khoa IP 15 phut)", () => {
   test("brute force -> 429 rate_limited", async () => {
     let got429 = false;
-    // Gioi han: 10 lan / 15 phut / IP. Cac test truoc da dung ~5 lan.
-    // Burn them toi da 10 lan nua — phai gap 429.
+    // Gioi han: 10 lan / 15 phut / IP. Cac section truoc (1, 5, 8, 8b) da dung
+    // gan het ngan sach -> burn them vai lan nua la gap 429.
     for (let i = 0; i < 10; i++) {
       const res = await api("POST", "/api/auth/login", {
         json: { email: `burn-${i}@example.com`, password: "SaiMatKhau!999" },
