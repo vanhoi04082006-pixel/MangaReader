@@ -15,7 +15,6 @@
 "use client";
 
 import { api, putToR2, uploadViaProxy, ApiClientError } from "@/lib/client/api";
-import { generateLqip } from "@/lib/client/lqip";
 import { MAX_PROXY_FILE_SIZE } from "@/schemas";
 import type { PresignResponseDto } from "@/types";
 
@@ -36,8 +35,6 @@ export interface PageItem {
   uploadUrl?: string;
   width: number | null;
   height: number | null;
-  /** Placeholder mờ base64 (sinh trong measure, gửi kèm finalize) */
-  lqip?: string | null;
   /** Lazy load noi dung anh (ZIP: extract tung entry; file: tra truc tiep) */
   loadBlob: () => Promise<Blob>;
 }
@@ -190,7 +187,7 @@ export class UploadEngine {
     return res;
   }
 
-  /** Do kich thuoc anh + sinh LQIP placeholder (canvas ~16px) — best effort */
+  /** Do kich thuoc anh (de reader tinh khung + preload) — best effort */
   private async measure(item: PageItem, blob: Blob): Promise<void> {
     if (item.width != null) return;
     try {
@@ -199,13 +196,6 @@ export class UploadEngine {
       bmp.close();
     } catch {
       // GIF lien tuc / du lieu la — bo qua, khong chan upload
-    }
-    // LQIP: nen xuong ~16px JPEG base64 (~0.5KB) — reader hien trang tuc thi
-    try {
-      const { lqip } = await generateLqip(blob);
-      if (lqip) this.opts.onItemChange(item.id, { lqip });
-    } catch {
-      // best effort — khong chan upload
     }
   }
 

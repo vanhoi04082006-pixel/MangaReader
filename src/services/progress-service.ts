@@ -57,7 +57,7 @@ export async function saveProgress(userId: string, input: ProgressInput) {
 export async function continueReading(userId: string, limit = 10): Promise<ContinueReadingItemDto[]> {
   const { data: rows } = await supabase
     .from("reading_progress")
-    .select("*, manga:mangas(*), chapter:chapters(id,chapter_number,title,page_count)")
+    .select("*, manga:mangas(id,title,cover_image_key), chapter:chapters(id,chapter_number,title,page_count)")
     .eq("user_id", userId)
     .order("updated_at", { ascending: false })
     .limit(limit);
@@ -66,8 +66,6 @@ export async function continueReading(userId: string, limit = 10): Promise<Conti
     mangaId: r.manga.id,
     mangaTitle: r.manga.title,
     coverImageKey: r.manga.cover_image_key,
-    coverLqip: r.manga.cover_lqip ?? null,
-    coverColor: r.manga.cover_color ?? null,
     chapterId: r.chapter.id,
     chapterNumber: r.chapter.chapter_number,
     chapterTitle: r.chapter.title,
@@ -89,7 +87,7 @@ export async function listHistory(
 
   const { data: rows } = await supabase
     .from("reading_history")
-    .select("*, manga:mangas(*), chapter:chapters(id,chapter_number,title,page_count)")
+    .select("*, manga:mangas(id,title,cover_image_key), chapter:chapters(id,chapter_number,title,page_count)")
     .eq("user_id", userId)
     .order("read_at", { ascending: false })
     .range((page - 1) * pageSize, page * pageSize - 1);
@@ -99,8 +97,6 @@ export async function listHistory(
     mangaId: r.manga.id,
     mangaTitle: r.manga.title,
     coverImageKey: r.manga.cover_image_key,
-    coverLqip: r.manga.cover_lqip ?? null,
-    coverColor: r.manga.cover_color ?? null,
     chapterId: r.chapter.id,
     chapterNumber: r.chapter.chapter_number,
     chapterTitle: r.chapter.title,

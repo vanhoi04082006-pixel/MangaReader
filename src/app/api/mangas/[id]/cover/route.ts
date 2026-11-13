@@ -98,9 +98,6 @@ export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
   );
   if (upsertErr) throw new ApiError(`Xác nhận ảnh bìa thất bại: ${upsertErr.message}`, 500);
 
-  const result = await setMangaCover(mangaId, input.objectKey, {
-    lqip: input.coverLqip ?? null,
-    color: input.coverColor ?? null,
-  });
+  const result = await setMangaCover(mangaId, input.objectKey);
   return ok(result);
 });

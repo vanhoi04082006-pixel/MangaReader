@@ -188,23 +188,7 @@ export async function listPages(chapterId: string): Promise<PageDto[]> {
     fileSize: Number(p.file_size),
     width: p.width,
     height: p.height,
-    lqip: p.lqip ?? null,
   }));
-}
-
-// Cot pages.lqip (migration 0003) — tu kiem tra ton tai, deploy
-// truoc/sau migration deu an toan (finalize bo qua lqip neu chua co cot).
-let pagesLqipColumnCache: boolean | null = null;
-
-export async function pagesSupportLqip(): Promise<boolean> {
-  if (pagesLqipColumnCache !== null) return pagesLqipColumnCache;
-  try {
-    const { error } = await supabase.from("pages").select("lqip").limit(1);
-    pagesLqipColumnCache = !error;
-  } catch {
-    pagesLqipColumnCache = false;
-  }
-  return pagesLqipColumnCache;
 }
 
 async function verifyObjectsInR2(
@@ -329,7 +313,6 @@ export async function finalizePages(input: PagesFinalizeInput) {
   }
 
   // B3: Ghi nhan DB
-  const supportsLqip = await pagesSupportLqip();
   for (const p of input.pages) {
     await supabase.from("pages").upsert(
       {
@@ -341,7 +324,6 @@ export async function finalizePages(input: PagesFinalizeInput) {
         file_size: p.fileSize,
         width: p.width ?? null,
         height: p.height ?? null,
-        ...(supportsLqip ? { lqip: p.lqip ?? null } : {}),
       },
       { onConflict: "chapter_id,page_number" }
     );
@@ -504,7 +486,6 @@ export async function getReaderPayload(
       height: p.height,
       fileSize: Number(p.file_size),
       mimeType: p.mime_type,
-      lqip: p.lqip ?? null,
     })),
     prevChapter: prev ? { id: prev.id, chapterNumber: prev.chapterNumber } : null,
     nextChapter: next ? { id: next.id, chapterNumber: next.chapterNumber } : null,

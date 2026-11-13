@@ -9,26 +9,15 @@ interface CoverImageProps {
   alt: string;
   className?: string;
   sizes?: string;
-  /** Placeholder mờ base64 (JPEG ~16px) — hiện tức thời trong lúc chờ ảnh thật */
-  lqip?: string | null;
-  /** Màu chủ đạo của bìa (hex) — nền placeholder khi không có lqip */
-  color?: string | null;
-  /** Ưu tiên tải ngay — dùng cho các ảnh hiện diện trên màn hình đầu tiên */
-  eager?: boolean;
 }
 
 /**
- * Anh bia voi placeholder tuc thoi (LQIP mo / mau chu dao) + fade-in.
- * - Co lqip: hien anh mo ~16px (data URI, 0 request) ngay lap tuc,
- *   anh that fade-in đè lên khi tai xong.
- * - Chi co color: nen mau chu dao thay shimmer.
- * - Khong co gi: giu shimmer gradient nhu cu.
+ * Anh bia voi 3 trang thai: loading (shimmer), loi (fallback), thanh cong.
  * Dung <img> thuan vi URL la presigned R2 (dynamic, khong qua next/image).
  */
-export function CoverImage({ src, alt, className, lqip, color, eager }: CoverImageProps) {
+export function CoverImage({ src, alt, className }: CoverImageProps) {
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [prevSrc, setPrevSrc] = useState(src);
-  const lqipUrl = lqip ? `data:image/jpeg;base64,${lqip}` : null;
 
   // Reset trạng thái khi đổi nguồn ảnh (presigned URL thay đổi) — derived state pattern
   if (prevSrc !== src) {
@@ -60,26 +49,14 @@ export function CoverImage({ src, alt, className, lqip, color, eager }: CoverIma
 
   return (
     <>
-      {/* Lớp placeholder — hiện tức thời, nằm dưới ảnh thật */}
-      {lqipUrl ? (
-        <img
-          src={lqipUrl}
-          alt=""
-          aria-hidden
-          draggable={false}
-          className="absolute inset-0 h-full w-full scale-110 object-cover blur-md"
-        />
-      ) : color ? (
-        <div aria-hidden className="absolute inset-0" style={{ backgroundColor: color }} />
-      ) : status === "loading" ? (
+      {status === "loading" && (
         <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-muted/60 to-muted/30" />
-      ) : null}
+      )}
       <img
         src={src}
         alt={alt}
-        loading={eager ? "eager" : "lazy"}
+        loading="lazy"
         decoding="async"
-        fetchPriority={eager ? "high" : "auto"}
         onLoad={() => setStatus("loaded")}
         onError={() => setStatus("error")}
         className={cn(
