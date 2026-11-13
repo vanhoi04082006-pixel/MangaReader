@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   BookOpen,
   ChevronDown,
@@ -67,13 +67,11 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
   const deleteManga = useDeleteManga();
   const deleteChapter = useDeleteChapter();
 
-  const firstChapter = useMemo(() => {
-    if (!chaptersData || chaptersData.items.length === 0) return null;
-    const sorted = [...chaptersData.items].sort((a, b) =>
-      a.chapterNumber.localeCompare(b.chapterNumber, undefined, { numeric: true })
-    );
-    return chapterSort === "asc" ? sorted[0] : sorted[sorted.length - 1];
-  }, [chaptersData, chapterSort]);
+  // Chương đầu tiên THẬT SỰ (số nhỏ nhất natural order) — dùng cho
+  // "Đọc từ đầu". Query riêng sort asc, pageSize 1 nên luôn đúng chương 1
+  // kể cả khi danh sách đang hiển thị desc hay ở trang bất kỳ (>50 chương).
+  const { data: firstChapterData } = useChapters(mangaId, "asc", 1, 1);
+  const firstChapter = firstChapterData?.items[0] ?? null;
 
   if (isError) {
     return (

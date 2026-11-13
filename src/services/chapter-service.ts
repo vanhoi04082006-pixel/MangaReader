@@ -12,7 +12,6 @@ import { safeDeleteObjects, removeMetadataIfDeleted } from "@/services/storage-s
 import { MAX_FILE_SIZE } from "@/schemas";
 import type { ChapterCreateInput, ChapterUpdateInput, PagesFinalizeInput } from "@/schemas";
 import type { ChapterDto, ReaderPayloadDto, PageDto, Paginated } from "@/types";
-import { naturalCompare } from "@/utils/natural-sort";
 
 async function chapterSizeMap(chapterIds: string[]): Promise<Map<string, number>> {
   if (chapterIds.length === 0) return new Map();
@@ -34,43 +33,49 @@ export async function listChapters(
   page: number,
   pageSize: number
 ): Promise<Paginated<ChapterDto>> {
-  const { count: total } = await supabase
-    .from("chapters")
-    .select("*", { count: "exact", head: true })
-    .eq("manga_id", mangaId);
+  // Phân trang theo NATURAL ORDER của số chương (không dùng created_at):
+  // import chương lệch thứ tự (vd ch 7 trước ch 2) không làm sai
+  // "mới nhất" / trang / chương đầu. getChapterOrder đã natural-sort.
+  const order = await getChapterOrder(mangaId);
+  if (sort === "desc") order.reverse();
+  const total = order.length;
 
-  const { data: chapters } = await supabase
-    .from("chapters")
-    .select("*")
-    .eq("manga_id", mangaId)
-    .order("created_at", { ascending: sort === "asc" })
-    .range((page - 1) * pageSize, page * pageSize - 1);
+  const pageIds = order.slice((page - 1) * pageSize, page * pageSize).map((c) => c.id);
+  const byId = new Map<string, any>();
+  if (pageIds.length > 0) {
+    const { data: chapters, error } = await supabase
+      .from("chapters")
+      .select("*")
+      .eq("manga_id", mangaId)
+      .in("id", pageIds);
+    if (error) throw new ApiError(`Không lấy được danh sách chương: ${error.message}`, 500);
+    for (const c of chapters ?? []) byId.set(c.id, c);
+  }
 
-  const sizeMap = await chapterSizeMap((chapters ?? []).map((c: any) => c.id));
+  const sizeMap = await chapterSizeMap(pageIds);
 
-  const items: ChapterDto[] = (chapters ?? []).map((c: any) => ({
-    id: c.id,
-    mangaId: c.manga_id,
-    chapterNumber: c.chapter_number,
-    title: c.title,
-    volume: c.volume,
-    pageCount: c.page_count,
-    sizeBytes: sizeMap.get(c.id) ?? 0,
-    createdAt: c.created_at,
-    updatedAt: c.updated_at,
-  }));
-
-  items.sort((a, b) => {
-    const cmp = naturalCompare(a.chapterNumber, b.chapterNumber);
-    return sort === "asc" ? cmp : -cmp;
-  });
+  // Giữ đúng thứ tự natural của trang (pageIds đã xếp sẵn)
+  const items: ChapterDto[] = pageIds
+    .map((id) => byId.get(id))
+    .filter((c): c is NonNullable<typeof c> => Boolean(c))
+    .map((c: any) => ({
+      id: c.id,
+      mangaId: c.manga_id,
+      chapterNumber: c.chapter_number,
+      title: c.title,
+      volume: c.volume,
+      pageCount: c.page_count,
+      sizeBytes: sizeMap.get(c.id) ?? 0,
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
+    }));
 
   return {
     items,
-    total: total ?? 0,
+    total,
     page,
     pageSize,
-    totalPages: Math.max(1, Math.ceil((total ?? 0) / pageSize)),
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
   };
 }
 
