@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
-import { Menu, Moon, Plus, Search, Sun, X } from "lucide-react";
+import { Moon, Plus, Search, Sun, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -17,7 +17,7 @@ import { navigate, useHashRoute } from "@/lib/client/hash-router";
 import { useAuthStore } from "@/store/auth-store";
 import { cn } from "@/lib/utils";
 
-export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
+export function Header() {
   const { theme, setTheme } = useTheme();
   const route = useHashRoute();
   const user = useAuthStore((s) => s.user);
@@ -61,18 +61,14 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
 
   return (
     <header className="sticky top-0 z-20 border-b bg-background/80 pt-[env(safe-area-inset-top,0px)] backdrop-blur-md">
-      <div className="mx-auto flex h-14 max-w-[1440px] items-center gap-2 px-4 md:gap-3 md:px-8">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="md:hidden"
-          onClick={onMenuClick}
-          aria-label="Mở menu"
-        >
-          <Menu className="h-5 w-5" />
-        </Button>
+      <div className="mx-auto flex h-14 max-w-[1440px] items-center gap-2 px-3 sm:px-4 md:gap-3 md:px-8">
+        {/* Logo — hiện trên mobile (sidebar ẩn, thay cho nút menu:
+            điều hướng chính đã có thanh tab dưới cùng) */}
+        <a href="#/" className="flex items-center gap-2 md:hidden" aria-label="Về trang chủ">
+          <img src="/logo.svg" alt="" className="h-8 w-8 rounded-lg" />
+        </a>
 
-        <div className="relative flex-1 md:max-w-md">
+        <div className="relative min-w-0 flex-1 sm:max-w-sm md:max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={inputRef}
@@ -108,6 +104,7 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
         </div>
 
         <div className="ml-auto flex items-center gap-1.5">
+          {/* Nút thêm truyện: ẩn trên mobile (đã có tab "Thêm truyện" dưới cùng) */}
           <Button
             size="sm"
             className={cn("hidden gap-2 sm:inline-flex", "font-semibold")}
@@ -115,15 +112,6 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
           >
             <Plus className="h-4 w-4" />
             Thêm truyện
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="gap-2 sm:hidden"
-            onClick={() => navigate("/upload")}
-            aria-label="Thêm truyện"
-          >
-            <Plus className="h-4 w-4" />
           </Button>
 
           <Button
