@@ -26,6 +26,21 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      {
+        // Service worker: KHONG duoc cache boi HTTP cache (browser phai luon
+        // fetch ban moi nhat); Service-Worker-Allowed cho phep scope "/".
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-store, max-age=0" },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
+      {
+        // Mot so host phuc .webmanifest voi text/plain -> Chrome tu choi
+        // manifest; khai bao MIME dung o day cho ca Vercel lan self-host.
+        source: "/manifest.webmanifest",
+        headers: [{ key: "Content-Type", value: "application/manifest+json" }],
+      },
     ];
   },
 };

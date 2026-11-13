@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
+import { PwaRegister } from "@/components/pwa/pwa-register";
 import { useAuthStore } from "@/store/auth-store";
 
 /** Kich thuoc auth 1 lan khi app mount */
@@ -46,6 +47,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
         <AuthBoot />
+        <PwaRegister />
         {children}
         <Toaster position="top-center" richColors closeButton />
       </ThemeProvider>

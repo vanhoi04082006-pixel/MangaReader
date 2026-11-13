@@ -362,7 +362,7 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -16 }}
             transition={{ duration: 0.2 }}
-            className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center p-3"
+            className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-3 pb-3 pt-[max(0.75rem,env(safe-area-inset-top,0px))]"
           >
             <div className="pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-1.5 rounded-xl border bg-background/85 p-1.5 shadow-lg backdrop-blur-md">
               <Button variant="ghost" size="icon" className="h-9 w-9" onClick={exitReader} aria-label="Thoát">
@@ -512,7 +512,7 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute bottom-4 right-4 z-10 rounded-full border bg-background/80 p-2.5 text-muted-foreground shadow-lg backdrop-blur-md transition-colors hover:text-foreground"
+            className="absolute bottom-[max(1rem,env(safe-area-inset-bottom,0px))] right-4 z-10 rounded-full border bg-background/80 p-2.5 text-muted-foreground shadow-lg backdrop-blur-md transition-colors hover:text-foreground"
             onClick={exitReader}
             aria-label="Thoát chế độ đọc"
           >

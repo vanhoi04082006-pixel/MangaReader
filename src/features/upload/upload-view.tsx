@@ -1063,10 +1063,11 @@ export function UploadView() {
 
                 {/* Bang trang */}
                 <div className="overflow-hidden rounded-lg border">
-                  {/* Scroll thuần: Radix ScrollArea không scroll được với
-                      max-h trên root (viewport không bị chặn chiều cao). */}
-                  <div className="max-h-72 overflow-y-auto overscroll-contain scrollbar-thin">
-                    <table className="w-full text-xs">
+                  {/* Scroll thuần 2 chiều: Radix ScrollArea không scroll được
+                      với max-h (viewport không bị chặn chiều cao); trên
+                      màn hẹp bảng cuộn NGANG thay vì bóp cột chữ méo. */}
+                  <div className="max-h-72 overflow-auto overscroll-contain scrollbar-thin">
+                    <table className="w-full min-w-[480px] text-xs">
                       <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
                         <tr className="text-left text-muted-foreground">
                           <th className="w-10 px-3 py-2 font-medium">#</th>
@@ -1093,13 +1094,15 @@ export function UploadView() {
                             </td>
                             <td className="px-3 py-1.5 text-right">
                               {!busy ? (
+                                // Touch target >= 32px (ngan hon 44 but OK cho
+                                // o phu; cac o chinh deu >= 36px)
                                 <button
-                                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                  className="rounded p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                                   onClick={() => removeItem(it.id)}
                                   aria-label={`Bỏ trang ${it.pageNumber ?? idx + 1}`}
                                   title="Bỏ trang này"
                                 >
-                                  <X className="h-3.5 w-3.5" />
+                                  <X className="h-4 w-4" />
                                 </button>
                               ) : null}
                             </td>
