@@ -84,6 +84,8 @@ export const pageMetaSchema = z.object({
   fileSize: z.number().int().positive().max(MAX_FILE_SIZE),
   width: z.number().int().positive().max(100000).optional().nullable(),
   height: z.number().int().positive().max(100000).optional().nullable(),
+  /** Placeholder mo base64 JPEG ~16px — sinh client-side (canvas), hien trang khi dang tai (migration 0003) */
+  lqip: z.string().max(4000).optional().nullable(),
 });
 
 export const pagesFinalizeSchema = z.object({
@@ -103,6 +105,9 @@ export const coverFinalizeSchema = z.object({
   fileSize: z.number().int().positive().max(MAX_FILE_SIZE),
   width: z.number().int().positive().optional().nullable(),
   height: z.number().int().positive().optional().nullable(),
+  /** Placeholder mo base64 JPEG ~16px + mau chu dao (hex) — sinh client-side (migration 0003) */
+  coverLqip: z.string().max(4000).optional().nullable(),
+  coverColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().nullable(),
 });
 
 export const setCoverFromPageSchema = z.object({

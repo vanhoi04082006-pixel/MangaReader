@@ -523,6 +523,7 @@ export function SingleUploadTab({
               fileSize: p.size,
               width: p.width,
               height: p.height,
+              lqip: p.lqip ?? null,
             })),
           }
         );

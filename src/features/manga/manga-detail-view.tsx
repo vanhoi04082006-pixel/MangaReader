@@ -114,8 +114,21 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
     <div className="space-y-8">
       {/* Khu vuc dau: bia + thong tin */}
       <div className="relative">
-        {/* Background blur tu bia */}
-        {manga.coverUrl && (
+        {/* Background blur — dung LQIP (data URI, hien tuc thi) thay anh full
+            de khoi tai + decode toan bo bia chi de lam nen mo */}
+        {manga.coverLqip ? (
+          <div
+            aria-hidden
+            className="absolute inset-x-0 top-0 h-80 overflow-hidden rounded-b-3xl opacity-25 blur-2xl saturate-150"
+          >
+            <img
+              src={`data:image/jpeg;base64,${manga.coverLqip}`}
+              alt=""
+              className="h-full w-full object-cover"
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background" />
+          </div>
+        ) : manga.coverUrl ? (
           <div
             aria-hidden
             className="absolute inset-x-0 top-0 h-80 overflow-hidden rounded-b-3xl opacity-25 blur-2xl saturate-150"
@@ -123,12 +136,18 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
             <img src={manga.coverUrl} alt="" className="h-full w-full object-cover" />
             <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background" />
           </div>
-        )}
+        ) : null}
 
         <div className="relative flex flex-col gap-6 md:flex-row">
           <div className="mx-auto w-44 shrink-0 sm:w-52 md:mx-0 md:w-64">
             <div className="relative aspect-[2/3] overflow-hidden rounded-xl border shadow-2xl">
-              <CoverImage src={manga.coverUrl} alt={`Bìa ${manga.title}`} />
+              <CoverImage
+                src={manga.coverUrl}
+                alt={`Bìa ${manga.title}`}
+                lqip={manga.coverLqip}
+                color={manga.coverColor}
+                eager
+              />
             </div>
           </div>
 

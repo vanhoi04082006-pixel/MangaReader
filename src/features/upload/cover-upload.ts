@@ -4,6 +4,7 @@
 // =============================================================
 
 import { api, putToR2, uploadViaProxy, ApiClientError } from "@/lib/client/api";
+import { generateLqip } from "@/lib/client/lqip";
 import { MAX_PROXY_FILE_SIZE } from "@/schemas";
 
 /** Chuẩn hóa MIME từ tên file — COVER presign yêu cầu MIME thuộc whitelist */
@@ -61,12 +62,18 @@ export async function uploadCoverToR2(mangaId: string, file: File): Promise<stri
       throw err;
     }
   }
+  // Sinh LQIP + màu chủ đạo ngay trên trình duyệt (canvas ~16px) —
+  // server không phải tải lại ảnh từ R2 để tính placeholder.
+  const { lqip, color } = await generateLqip(file);
+
   await api.post(`/api/mangas/${mangaId}/cover`, {
     mangaId,
     objectKey: presign.objectKey,
     fileName: file.name,
     mimeType,
     fileSize: file.size,
+    ...(lqip ? { coverLqip: lqip } : {}),
+    ...(color ? { coverColor: color } : {}),
   });
   return presign.objectKey;
 }

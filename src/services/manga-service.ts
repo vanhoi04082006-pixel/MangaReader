@@ -35,6 +35,21 @@ export async function mangaSupportsSourceUrl(): Promise<boolean> {
   return sourceUrlColumnCache;
 }
 
+// Cot mangas.cover_lqip / cover_color (migration 0003) — cung tu kiem tra
+// ton tai (deploy truoc/khi migration deu an toan; UI fallback shimmer).
+let lqipColumnCache: boolean | null = null;
+
+export async function mangaSupportsLqip(): Promise<boolean> {
+  if (lqipColumnCache !== null) return lqipColumnCache;
+  try {
+    const { error } = await supabase.from("mangas").select("cover_lqip").limit(1);
+    lqipColumnCache = !error;
+  } catch {
+    lqipColumnCache = false;
+  }
+  return lqipColumnCache;
+}
+
 /**
  * Chuẩn hóa tên để so khớp truyện trùng: bỏ dấu tiếng Việt, lowercase,
  * chỉ giữ chữ+số ("Roubaitei (Hololive)" ≈ "roubaitei hololive").
@@ -100,6 +115,8 @@ export async function getMangaSummaries(ids: string[], userId: string): Promise<
         author: m.author,
         status: m.status as MangaStatus,
         coverImageKey: m.cover_image_key,
+        coverLqip: m.cover_lqip ?? null,
+        coverColor: m.cover_color ?? null,
         genres: (m.genres ?? []).map((g: any) => g.genre?.name).filter(Boolean).sort((a: string, b: string) => a.localeCompare(b)),
         chapterCount: agg.count,
         pageCount: agg.pages,
@@ -367,12 +384,21 @@ export async function toggleFavorite(userId: string, mangaId: string) {
   return { favorited: true };
 }
 
-export async function setMangaCover(mangaId: string, newKey: string | null) {
+export async function setMangaCover(
+  mangaId: string,
+  newKey: string | null,
+  lqip?: { lqip: string | null; color: string | null }
+) {
   const { data: manga } = await supabase.from("mangas").select("cover_image_key").eq("id", mangaId).maybeSingle();
   if (!manga) throw new ApiError("Không tìm thấy truyện.", 404, "not_found");
   const oldKey = manga.cover_image_key;
 
-  await supabase.from("mangas").update({ cover_image_key: newKey }).eq("id", mangaId);
+  const update: Record<string, unknown> = { cover_image_key: newKey };
+  if (lqip && (await mangaSupportsLqip())) {
+    update.cover_lqip = lqip.lqip ?? null;
+    update.cover_color = lqip.color ?? null;
+  }
+  await supabase.from("mangas").update(update).eq("id", mangaId);
 
   if (oldKey && oldKey !== newKey) {
     const { data: stillUsed } = await supabase.from("pages").select("id").eq("object_key", oldKey).limit(1).maybeSingle();
