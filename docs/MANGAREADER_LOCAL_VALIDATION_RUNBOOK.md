@@ -29,9 +29,21 @@ bun run dev                 # http://localhost:3000
 | `Production build (PG client)` | Đúng Build Command Vercel: `db:generate:pg` + typecheck PG + `next build` | **Có** (required check) |
 | `Integration (real stack)` | 55 integration test với Supabase + R2 thật | Tùy chọn (mặc định bỏ qua) |
 
-### Quy trình làm việc với branch (branch protection đang bật trên `main`)
+### Quy trình làm việc với branch — kỷ luật "CI xanh mới merge"
 
-1. **Không bao giờ push thẳng vào `main`** — protection chặn (require PR + required checks xanh).
+> **Lưu ý về branch protection (GitHub Free + private repo)**: GitHub chỉ cho bật
+> Branch Protection / Required Checks ở private repo khi có **GitHub Pro**. Repo hiện ở
+> gói Free → GitHub KHÔNG tự chặn push thẳng/merge khi CI đỏ. Kỷ luật dưới đây là
+> **thủ tục** (mọi merge trong phiên CI/CD này đều đã được xác minh CI xanh qua API trước khi merge).
+>
+> Nếu muốn GitHub enforce cứng, chọn 1 trong 2:
+> 1. **Make repo public** (Settings → General → Danger Zone → Change visibility) —
+>    code đã audit sạch secret (pass 1–5), sau đó bảo vệ được miễn phí. (*Liên hệ tôi
+>    bật lại protection sau khi đổi.*)
+> 2. **Nâng GitHub Pro** — giữ private + đầy đủ protection.
+
+Quy trình thủ tục (đang áp dụng):
+1. **Không push thẳng vào `main`** — luôn đi qua PR.
 2. Luồng chuẩn:
    ```bash
    git checkout -b feature/ten-tinh-nang
