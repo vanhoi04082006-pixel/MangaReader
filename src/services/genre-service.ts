@@ -19,7 +19,7 @@ export async function listGenres() {
   if (error) throw new Error(`listGenres failed: ${error.message}`);
 
   // Count mangas per genre
-  const result = [];
+  const result: Array<{ id: string; name: string; mangaCount: number }> = [];
   for (const g of genres ?? []) {
     const { count } = await supabase
       .from("manga_genres")
