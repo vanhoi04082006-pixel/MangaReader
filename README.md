@@ -200,6 +200,14 @@ bun run dev                   # http://localhost:3000  (Windows: bun run dev:win
 
 **Production (Supabase PostgreSQL)**: nguồn chân lý là **SQL migrations** trong `supabase/migrations/` — chạy qua SQL Editor, KHÔNG dùng `prisma db push` hay `prisma migrate` cho production. Schema `prisma/schema.postgres.prisma` map 1-1 với SQL (`@@map("mangas")`, `@map("created_at")`, `@db.Uuid`, `@db.BigInt`, `@db.Timestamptz(6)`) và chỉ dùng để **sinh Prisma client** cho production build (`bun run db:generate:pg`).
 
+### Migration nâng cấp (chạy theo thứ tự)
+
+| Migration | Nội dung | Ghi chú |
+|---|---|---|
+| `0001_init.sql` | 12 bảng + RLS + seed | Bắt buộc khi khởi tạo |
+| `0002_manga_source_url.sql` | Cột `mangas.source_url` (nguồn truyện) | Idempotent; app tự probe cột |
+| `0003_manga_lqip.sql` | Cột `mangas.cover_lqip/cover_color` + `pages.lqip` — placeholder mờ giúp **ảnh hiển thị gần như tức thì** (blur-up trong lúc chờ ảnh thật) | Idempotent; app tự probe cột, deploy trước/sau đều an toàn. Sau khi chạy, sinh LQIP cho **dữ liệu cũ** bằng `bun run backfill:lqip` (tùy chọn `ONLY=covers|pages`, `DRY=1`). Ảnh upload sau này tự sinh LQIP client-side khi import |
+
 ### Bảng dữ liệu (12)
 
 | Bảng | Vai trò |
@@ -318,7 +326,7 @@ bun test tests/                # 124 test: 69 unit + 55 integration
 | 403 "Yêu cầu cross-site bị từ chối" | Mutation thiếu/khác Origin — client phải gọi same-origin (trình duyệt hiện đại luôn tự gửi Origin). |
 | Storage có object "DELETE_PENDING" | Xóa R2 thất bại trước đó — Storage > Dọn dẹp > retry (`mode: failed`), hoặc chạy lại tới khi sạch. |
 | `prisma db push` đòi xóa dữ liệu | Schema drift — KHÔNG chạy với `--accept-data-loss` trên dữ liệu thật; kiểm tra diff trước. |
-| Migration SQL lỗi "column does not exist" | Đảm bảo chạy đúng thứ tự `supabase/migrations/*.sql` (hiện chỉ cần `0001_init.sql`). |
+| Migration SQL lỗi "column does not exist" | Đảm bảo chạy đúng thứ tự `supabase/migrations/*.sql` (`0001` → `0002` → `0003`, idempotent — chạy lại an toàn). |
 
 ---
 

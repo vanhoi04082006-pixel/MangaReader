@@ -21,9 +21,10 @@ export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
   const { id: mangaId } = await ctx.params;
   const { pageId } = await parseBody(req, setCoverFromPageSchema);
 
+  // Select "*" — lqip (migration 0003) tu co neu ton tai, khong loi neu chua migrate
   const { data: page } = await supabase
     .from("pages")
-    .select("object_key, file_name, file_size, mime_type, chapter_id")
+    .select("*")
     .eq("id", pageId)
     .maybeSingle();
   if (!page) return fail("Trang không thuộc truyện này.", 404, "not_found");
@@ -55,6 +56,10 @@ export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
   });
   if (insertErr) throw new ApiError(`Tạo metadata ảnh bìa thất bại: ${insertErr.message}`, 500);
 
-  const result = await setMangaCover(mangaId, newKey);
+  // Bia ke thua placeholder LQIP cua trang goc (cung anh, cung placeholder)
+  const result = await setMangaCover(mangaId, newKey, {
+    lqip: page.lqip ?? null,
+    color: null,
+  });
   return ok(result);
 });

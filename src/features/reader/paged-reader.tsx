@@ -109,6 +109,7 @@ export function PagedReader({
           alt={`Trang ${page.pageNumber}`}
           fit={fit}
           eager
+          lqip={page.lqip}
           onSourceError={onSourceError}
           className={fit === "height" ? "h-full py-0" : "py-0"}
         />

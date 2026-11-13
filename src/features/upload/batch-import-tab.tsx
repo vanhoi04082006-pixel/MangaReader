@@ -758,6 +758,7 @@ export function BatchImportTab() {
                     fileSize: p.size,
                     width: p.width,
                     height: p.height,
+                    lqip: p.lqip ?? null,
                   })),
                 });
                 finalized = true;

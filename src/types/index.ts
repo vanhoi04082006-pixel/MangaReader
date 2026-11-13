@@ -32,6 +32,10 @@ export interface MangaSummaryDto {
   coverImageKey: string | null;
   /** presigned GET — sinh boi attachCoverUrls() tai route; optional tai tang service */
   coverUrl?: string | null;
+  /** Placeholder mo base64 JPEG ~16px — hien thi tuc thoi khi cho anh (migration 0003) */
+  coverLqip: string | null;
+  /** Mau chu dao cua bia (hex) — nen placeholder */
+  coverColor: string | null;
   genres: string[];
   chapterCount: number;
   pageCount: number;
@@ -83,6 +87,8 @@ export interface PageDto {
   fileSize: number;
   width: number | null;
   height: number | null;
+  /** Placeholder mo base64 JPEG ~16px (migration 0003) — null voi du lieu cu */
+  lqip: string | null;
 }
 
 export interface ReaderPageDto {
@@ -92,6 +98,8 @@ export interface ReaderPageDto {
   height: number | null;
   fileSize: number;
   mimeType: string;
+  /** Placeholder mo base64 JPEG ~16px (migration 0003) — null voi du lieu cu */
+  lqip: string | null;
 }
 
 export interface ReaderPayloadDto {
@@ -108,6 +116,8 @@ export interface ContinueReadingItemDto {
   mangaTitle: string;
   coverImageKey: string | null;
   coverUrl?: string | null;
+  coverLqip: string | null;
+  coverColor: string | null;
   chapterId: string;
   chapterNumber: string;
   chapterTitle: string | null;
@@ -145,6 +155,8 @@ export interface HistoryEntryDto {
   mangaTitle: string;
   coverImageKey: string | null;
   coverUrl?: string | null;
+  coverLqip: string | null;
+  coverColor: string | null;
   chapterId: string;
   chapterNumber: string;
   chapterTitle: string | null;

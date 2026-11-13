@@ -10,6 +10,8 @@ interface PageImageProps {
   alt: string;
   fit: "width" | "height" | "original";
   eager?: boolean;
+  /** Placeholder mờ base64 (JPEG ~16px) — hiện trang tức thời trong lúc chờ ảnh thật */
+  lqip?: string | null;
   /** Goi khi anh loi — component se de nguon moi tu query refetch */
   onSourceError?: () => void;
   className?: string;
@@ -21,10 +23,11 @@ const FIT_CLASSES: Record<string, string> = {
   original: "max-w-none",
 };
 
-export function PageImage({ src, alt, fit, eager, onSourceError, className }: PageImageProps) {
+export function PageImage({ src, alt, fit, eager, lqip, onSourceError, className }: PageImageProps) {
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [attempt, setAttempt] = useState(0);
   const [prevSrc, setPrevSrc] = useState(src);
+  const lqipUrl = lqip ? `data:image/jpeg;base64,${lqip}` : null;
 
   // Reset khi doi nguon (trang moi / URL presigned moi) — pattern derived state
   if (prevSrc !== src) {
@@ -74,17 +77,29 @@ export function PageImage({ src, alt, fit, eager, onSourceError, className }: Pa
 
   return (
     <div className={cn("relative flex w-full items-center justify-center", className)}>
-      {status === "loading" && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/50" />
-        </div>
-      )}
+      {/* Placeholder mờ hiện tức thời (data URI — 0 request) trong lúc chờ trang thật */}
+      {status === "loading" &&
+        (lqipUrl ? (
+          <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+            <img
+              src={lqipUrl}
+              alt=""
+              draggable={false}
+              className="h-full w-full scale-105 object-cover blur-lg"
+            />
+          </div>
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/50" />
+          </div>
+        ))}
       <img
         src={src}
         alt={alt}
         loading={eager ? "eager" : "lazy"}
         decoding="async"
         draggable={false}
+        fetchPriority={eager ? "high" : "auto"}
         onLoad={() => setStatus("loaded")}
         onError={onError}
         className={cn(
