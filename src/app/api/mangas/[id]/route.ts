@@ -25,7 +25,7 @@ export const PATCH = withErrorHandling<Ctx>(async (req, ctx) => {
   const { id } = await ctx.params;
   const input = await parseBody(req, mangaUpdateSchema);
   const manga = await updateManga(id, input);
-  return ok({ id: manga.id, updatedAt: manga.updatedAt.toISOString() });
+  return ok({ id: manga.id, updatedAt: manga.updated_at });
 });
 
 export const DELETE = withErrorHandling<Ctx>(async (req, ctx) => {

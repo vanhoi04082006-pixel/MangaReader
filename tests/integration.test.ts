@@ -14,13 +14,11 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import {
   supabaseAnonHeaders,
   supabaseServiceHeaders,
   supabaseUserHeaders,
 } from "../src/lib/supabase-keys";
-import { resolveSqliteFile } from "../src/lib/sqlite-url";
 
 /** Dev server mac dinh 3000; override bang TEST_BASE_URL (vd chay audit tren 3001). */
 const BASE = ((ENV_TEST_BASE_URL()) ?? "http://localhost:3000").replace(/\/$/, "");
@@ -119,21 +117,19 @@ beforeAll(async () => {
   if (!ADMIN_PASSWORD) throw new Error("Thiếu ADMIN_PASSWORD trong .env — khong the chay integration test");
   if (!SUPABASE_SK) throw new Error("Thiếu SUPABASE_SERVICE_SECRET_KEY — khong the test second user");
 
-  // Reset bang rate limit (chi SQLite dev) de test lap lai duoc — khong anh huong du lieu.
-  // DUONG DAN resolve theo thu muc schema Prisma (giong app/Prisma client) —
-  // dung du ca khi chay test tu thu muc khac (xem src/lib/sqlite-url.ts).
-  if ((ENV.DATABASE_URL ?? "").startsWith("file:")) {
+  // Reset bang rate limit de test lap lai duoc — khong anh huong du lieu.
+  // Rate limiter chay tren Supabase REST (dev va prod cung the) nen phai xoa
+  // bang rate_limit_hits TRUC TIEP qua PostgREST bang service key.
+  // (SQLite chi con duoc dung boi ban Prisma cu — khong con dung boi app.)
+  if (SUPABASE_URL && SUPABASE_SK) {
     try {
-      const { Database } = await import("bun:sqlite");
-      const schemaPath = path.resolve(import.meta.dir, "..", "prisma", "schema.prisma");
-      const resolved = resolveSqliteFile(ENV.DATABASE_URL ?? "", schemaPath);
-      if (!resolved.ok || !resolved.path) throw new Error(resolved.error ?? "DATABASE_URL khong hop le");
-      const sqlite = new Database(resolved.path);
-      sqlite.run('DELETE FROM "RateLimitHit"');
-      sqlite.close();
-      console.log(`[test] Rate limit table cleared (SQLite dev: ${resolved.path})`);
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/rate_limit_hits?count=gte.0`, {
+        method: "DELETE",
+        headers: supabaseServiceHeaders(SUPABASE_SK),
+      });
+      console.log(`[test] rate_limit_hits cleared via Supabase REST: ${res.status}`);
     } catch (err) {
-      console.warn("[test] Khong xoa duoc rate limit table:", (err as Error).message);
+      console.warn("[test] Khong xoa duoc rate_limit_hits (Supabase):", (err as Error).message);
     }
   }
 });

@@ -4,9 +4,9 @@
 // safe-delete object bia CU tren R2 — PHA HOI du lieu thuc cho du endpoint
 // dung POST -> Strict Session Guard (xac minh session truc tiep, khong cache 90s).
 import { NextRequest, NextResponse } from "next/server";
-import { ok, requireAdminDestructive, parseBody, fail, withErrorHandling } from "@/lib/api";
+import { ok, requireAdminDestructive, parseBody, fail, withErrorHandling, ApiError } from "@/lib/api";
 import { setCoverFromPageSchema } from "@/schemas";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { copyObject, coverObjectKey, extFromMime } from "@/lib/r2";
 import { setMangaCover } from "@/services/manga-service";
 
@@ -21,31 +21,39 @@ export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
   const { id: mangaId } = await ctx.params;
   const { pageId } = await parseBody(req, setCoverFromPageSchema);
 
-  const page = await db.page.findUnique({
-    where: { id: pageId },
-    include: { chapter: { select: { mangaId: true } } },
-  });
-  if (!page || page.chapter.mangaId !== mangaId) {
+  const { data: page } = await supabase
+    .from("pages")
+    .select("object_key, file_name, file_size, mime_type, chapter_id")
+    .eq("id", pageId)
+    .maybeSingle();
+  if (!page) return fail("Trang không thuộc truyện này.", 404, "not_found");
+
+  // Trang phai thuoc truyen nay (pages -> chapters -> manga_id)
+  const { data: chapter } = await supabase
+    .from("chapters")
+    .select("manga_id")
+    .eq("id", page.chapter_id)
+    .maybeSingle();
+  if (!chapter || chapter.manga_id !== mangaId) {
     return fail("Trang không thuộc truyện này.", 404, "not_found");
   }
 
-  const ext = extFromMime(page.mimeType) ?? "jpg";
+  const ext = extFromMime(page.mime_type) ?? "jpg";
   const newKey = coverObjectKey(mangaId, ext);
-  await copyObject(page.objectKey, newKey, page.mimeType);
+  await copyObject(page.object_key, newKey, page.mime_type);
 
-  await db.storageObject.create({
-    data: {
-      objectKey: newKey,
-      kind: "COVER",
-      status: "CONFIRMED",
-      confirmedAt: new Date(),
-      mangaId,
-      chapterId: null,
-      fileName: page.fileName,
-      fileSize: page.fileSize,
-      mimeType: page.mimeType,
-    },
+  const { error: insertErr } = await supabase.from("storage_objects").insert({
+    object_key: newKey,
+    kind: "COVER",
+    status: "CONFIRMED",
+    confirmed_at: new Date().toISOString(),
+    manga_id: mangaId,
+    chapter_id: null,
+    file_name: page.file_name,
+    file_size: Number(page.file_size),
+    mime_type: page.mime_type,
   });
+  if (insertErr) throw new ApiError(`Tạo metadata ảnh bìa thất bại: ${insertErr.message}`, 500);
 
   const result = await setMangaCover(mangaId, newKey);
   return ok(result);

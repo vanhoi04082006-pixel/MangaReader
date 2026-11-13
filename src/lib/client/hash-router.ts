@@ -36,8 +36,17 @@ export function useHashRoute(): HashRoute {
 
   useEffect(() => {
     const onChange = () => setRoute(parseHash());
+    // "hashchange": khi location.hash doi truc tiep (navigate(), anchor).
+    // "popstate": Next.js <Link> voi href chi-diff-hash chay soft navigation
+    // qua history.pushState + dispatch popstate (KHONG fire hashchange) —
+    // neu khong lang nghe popstate thi bam sidebar (VD: Yeu thich) khong
+    // chuyen tab cho den khi F5.
     window.addEventListener("hashchange", onChange);
-    return () => window.removeEventListener("hashchange", onChange);
+    window.addEventListener("popstate", onChange);
+    return () => {
+      window.removeEventListener("hashchange", onChange);
+      window.removeEventListener("popstate", onChange);
+    };
   }, []);
 
   return route;

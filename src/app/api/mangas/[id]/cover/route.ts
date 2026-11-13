@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ok, requireAdminDestructive, parseBody, fail, withErrorHandling, ApiError } from "@/lib/api";
 import { coverFinalizeSchema, MAX_FILE_SIZE } from "@/schemas";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { headObject } from "@/lib/r2";
 import { setMangaCover } from "@/services/manga-service";
 
@@ -25,11 +25,15 @@ export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
   const { id: mangaId } = await ctx.params;
   const input = await parseBody(req, coverFinalizeSchema);
 
-  const manga = await db.manga.findUnique({ where: { id: mangaId }, select: { id: true } });
+  const { data: manga } = await supabase.from("mangas").select("id").eq("id", mangaId).maybeSingle();
   if (!manga) return fail("Không tìm thấy truyện.", 404, "not_found");
 
   // Verify metadata dang ky trong DB
-  const row = await db.storageObject.findUnique({ where: { objectKey: input.objectKey } });
+  const { data: row } = await supabase
+    .from("storage_objects")
+    .select("object_key, kind, status, manga_id, file_size")
+    .eq("object_key", input.objectKey)
+    .maybeSingle();
   const expectedPrefix = `mangas/${mangaId}/covers/`;
   if (!row) {
     throw new ApiError("Object key chưa được đăng ký qua /api/uploads/presign.", 400, "unregistered_key");
@@ -40,15 +44,15 @@ export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
   if (row.status === "DELETE_PENDING") {
     throw new ApiError("Object đang chờ xóa.", 409, "delete_pending");
   }
-  if (row.mangaId !== mangaId) {
+  if (row.manga_id !== mangaId) {
     throw new ApiError("Object không thuộc truyện này.", 403, "bad_owner");
   }
   if (!input.objectKey.startsWith(expectedPrefix)) {
     throw new ApiError("Object key không thuộc namespace cover của truyện.", 400, "bad_namespace");
   }
-  if (Number(row.fileSize) !== input.fileSize) {
+  if (Number(row.file_size) !== input.fileSize) {
     throw new ApiError(
-      `Kích thước đăng ký (${Number(row.fileSize)}B) khác gửi lên (${input.fileSize}B).`,
+      `Kích thước đăng ký (${Number(row.file_size)}B) khác gửi lên (${input.fileSize}B).`,
       400,
       "size_mismatch"
     );
@@ -78,28 +82,21 @@ export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
     );
   }
 
-  await db.storageObject.upsert({
-    where: { objectKey: input.objectKey },
-    update: {
-      status: "CONFIRMED",
-      confirmedAt: new Date(),
-      kind: "COVER",
-      mangaId,
-      fileName: input.fileName,
-      fileSize: input.fileSize,
-      mimeType: input.mimeType,
-    },
-    create: {
-      objectKey: input.objectKey,
+  const { error: upsertErr } = await supabase.from("storage_objects").upsert(
+    {
+      object_key: input.objectKey,
       kind: "COVER",
       status: "CONFIRMED",
-      confirmedAt: new Date(),
-      mangaId,
-      fileName: input.fileName,
-      fileSize: input.fileSize,
-      mimeType: input.mimeType,
+      confirmed_at: new Date().toISOString(),
+      manga_id: mangaId,
+      chapter_id: null,
+      file_name: input.fileName,
+      file_size: input.fileSize,
+      mime_type: input.mimeType,
     },
-  });
+    { onConflict: "object_key" }
+  );
+  if (upsertErr) throw new ApiError(`Xác nhận ảnh bìa thất bại: ${upsertErr.message}`, 500);
 
   const result = await setMangaCover(mangaId, input.objectKey);
   return ok(result);
