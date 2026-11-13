@@ -48,6 +48,7 @@ model Manga {
   status            String    @default("ONGOING") // ONGOING | COMPLETED | HIATUS | DROPPED
   publicationYear   Int?      @map("publication_year")
   coverImageKey     String?   @map("cover_image_key")
+  sourceUrl         String?   @map("source_url")
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 

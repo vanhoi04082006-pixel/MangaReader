@@ -7,6 +7,9 @@
 // - Cancel: abort XHR + goi /api/uploads/abort de don object mo coi tren R2
 // - Retry an toan: item da presign thi KHONG presign lai (tranh trung
 //   objectKey unique trong storage_objects), chi PUT lai
+// - CHONG TREO 60s (Vercel serverless): api.ts dat timeout + watchdog
+//   "stalled"; engine retry tung anh (backoff) khi gap loi tam thoi
+//   (mang/timeout/5xx/429) truoc khi danh dau that bai
 // =============================================================
 
 "use client";
@@ -56,6 +59,33 @@ export interface UploadRunResult {
 const CONCURRENCY = 3;
 const PROGRESS_THROTTLE_MS = 150;
 const SPEED_SAMPLE_MS = 500;
+/** So lan retry tung anh khi gap loi tam thoi (ngoai lan dau) */
+const MAX_ITEM_RETRIES = 2;
+/** Backoff giua cac lan retry (ms) */
+const RETRY_BACKOFF_MS = [2_000, 6_000];
+
+/** Loi tam thoi — retry cung presign URL se co kha nang thanh cong */
+function isRetryableUploadError(err: unknown): boolean {
+  if (err instanceof ApiClientError) {
+    if (err.code === "network" || err.code === "timeout" || err.code === "stalled") return true;
+    if (err.status === 429 || err.status === 502 || err.status === 503 || err.status === 504) return true;
+  }
+  return false;
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+      { once: true }
+    );
+  });
+}
 
 export class UploadEngine {
   private cancelledFlag = false;
@@ -171,6 +201,35 @@ export class UploadEngine {
 
   // ---------------- upload 1 trang ----------------
 
+  /** PUT 1 lan (truc tiep R2, fallback proxy) — nem loi de layer retry xu ly */
+  private async putOnce(item: PageItem, presign: PresignResponseDto, blob: Blob): Promise<void> {
+    const { signal } = this.ctrl;
+    const track = (loaded: number) => {
+      this.loaded.set(item.id, loaded);
+      this.emit();
+    };
+
+    try {
+      await putToR2(presign.uploadUrl, blob, item.mimeType, track, signal);
+    } catch (err) {
+      if (signal.aborted) throw err;
+      // CORS / presigned URL het han / timeout / stalled -> proxy qua Next server.
+      // NHUNG: proxy bi gioi han kich thuoc (Vercel ~4.5MB body) — file
+      // lon hon thi KHONG thu proxy, bao loi ro rang (can CORS cho bucket).
+      if (blob.size > MAX_PROXY_FILE_SIZE) {
+        if (err instanceof ApiClientError && (err.code === "network" || err.code === "timeout" || err.code === "stalled" || err.status === 0)) {
+          throw new Error(
+            `Không upload trực tiếp được R2 (mạng/timeout) và file (${(blob.size / 1024 / 1024).toFixed(1)}MB) vượt giới hạn proxy (${(
+              MAX_PROXY_FILE_SIZE / 1024 / 1024
+            ) | 0}MB). Hãy cấu hình CORS cho bucket R2.`
+          );
+        }
+        throw err;
+      }
+      await uploadViaProxy(presign.objectKey, blob, item.mimeType, track, signal);
+    }
+  }
+
   private async uploadOne(item: PageItem): Promise<void> {
     const { signal } = this.ctrl;
     this.opts.onItemChange(item.id, { status: "uploading", error: undefined });
@@ -179,27 +238,24 @@ export class UploadEngine {
       const blob = await item.loadBlob();
       await this.measure(item, blob);
 
-      const track = (loaded: number) => {
-        this.loaded.set(item.id, loaded);
-        this.emit();
-      };
-
-      try {
-        await putToR2(presign.uploadUrl, blob, item.mimeType, track, signal);
-      } catch (err) {
-        if (signal.aborted) throw err;
-        // CORS / presigned URL het han -> proxy qua Next server.
-        // NHUNG: proxy bi gioi han kich thuoc (Vercel ~4.5MB body) — file
-        // lon hon thi KHONG thu proxy, bao loi ro rang (can CORS cho bucket).
-        if (blob.size > MAX_PROXY_FILE_SIZE) {
-          throw new Error(
-            `Không upload trực tiếp được R2 (CORS/mạng) và file (${(blob.size / 1024 / 1024).toFixed(1)}MB) vượt giới hạn proxy (${(
-              MAX_PROXY_FILE_SIZE / 1024 / 1024
-            ) | 0}MB). Hãy cấu hình CORS cho bucket R2.`
-          );
+      // Retry tung anh voi backoff — tranh treo ca hang doi chi vi 1 anh
+      // mang do (serverless 60s / mat goi tin).
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt <= MAX_ITEM_RETRIES; attempt++) {
+        if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
+        try {
+          await this.putOnce(item, presign, blob);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (signal.aborted) throw err;
+          if (!isRetryableUploadError(err) || attempt === MAX_ITEM_RETRIES) throw err;
+          // Cho roi thu lai (presign URL con han 15 phut — tai su dung)
+          await sleep(RETRY_BACKOFF_MS[attempt] ?? 6_000, signal);
         }
-        await uploadViaProxy(presign.objectKey, blob, item.mimeType, track, signal);
       }
+      if (lastErr) throw lastErr;
 
       this.loaded.delete(item.id);
       this.uploadedBytes += item.size;

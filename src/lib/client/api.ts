@@ -66,8 +66,12 @@ export function uploadViaProxy(
   blob: Blob,
   contentType: string,
   onProgress?: (loaded: number, total: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts?: { timeoutMs?: number; stallMs?: number }
 ): Promise<void> {
+  // Vercel serverless chan request ~60s — timeout 55s de client tu
+  // nhan biet va retry TRUOC khi server dut ket noi (tranh treo vinh vien).
+  const timeoutMs = opts?.timeoutMs ?? 55_000;
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open(
@@ -75,10 +79,27 @@ export function uploadViaProxy(
       `/api/uploads/direct?key=${encodeURIComponent(key)}&contentType=${encodeURIComponent(contentType)}`
     );
     xhr.setRequestHeader("Content-Type", contentType);
+    xhr.timeout = timeoutMs;
+
+    // Watchdog: khong co byte moi trong stallMs -> tu dut ket noi de retry
+    // (ket noi treo co the khong bao gio fire onerror/ontimeout)
+    const stallMs = opts?.stallMs ?? 30_000;
+    let stalled = false;
+    let lastActivity = Date.now();
+    const stallTimer = setInterval(() => {
+      if (Date.now() - lastActivity > stallMs) {
+        stalled = true;
+        xhr.abort();
+      }
+    }, 3_000);
+    const cleanup = () => clearInterval(stallTimer);
+
     xhr.upload.onprogress = (e) => {
+      lastActivity = Date.now();
       if (e.lengthComputable) onProgress?.(e.loaded, e.total);
     };
     xhr.onload = () => {
+      cleanup();
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else {
         let msg = "Upload thất bại.";
@@ -90,8 +111,22 @@ export function uploadViaProxy(
         reject(new ApiClientError(msg, xhr.status));
       }
     };
-    xhr.onerror = () => reject(new ApiClientError("Lỗi kết nối khi upload.", 0, "network"));
-    xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
+    xhr.onerror = () => {
+      cleanup();
+      reject(new ApiClientError("Lỗi kết nối khi upload.", 0, "network"));
+    };
+    xhr.ontimeout = () => {
+      cleanup();
+      reject(new ApiClientError(`Upload quá ${Math.round(timeoutMs / 1000)}s — thử lại.`, 0, "timeout"));
+    };
+    xhr.onabort = () => {
+      cleanup();
+      if (stalled) {
+        reject(new ApiClientError("Upload bị đình trệ (không có dữ liệu) — thử lại.", 0, "stalled"));
+        return;
+      }
+      reject(new DOMException("Aborted", "AbortError"));
+    };
     signal?.addEventListener("abort", () => xhr.abort());
     xhr.send(blob);
   });
@@ -103,22 +138,56 @@ export function putToR2(
   blob: Blob,
   contentType: string,
   onProgress?: (loaded: number, total: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts?: { timeoutMs?: number; stallMs?: number }
 ): Promise<void> {
+  // PUT truc tiep browser -> R2 khong bi gioi han serverless, nhung van
+  // can timeout de file rat lon tren mang cham khong treo vo han.
+  const timeoutMs = opts?.timeoutMs ?? 300_000;
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl);
     xhr.setRequestHeader("Content-Type", contentType);
+    xhr.timeout = timeoutMs;
+    let stalled = false;
+    let lastActivity = Date.now();
+    const stallMs = opts?.stallMs ?? 45_000;
+    const stallTimer = setInterval(() => {
+      if (Date.now() - lastActivity > stallMs) {
+        stalled = true;
+        xhr.abort();
+      }
+    }, 3_000);
+    const bumpActivity = () => {
+      lastActivity = Date.now();
+    };
     xhr.upload.onprogress = (e) => {
+      bumpActivity();
       if (e.lengthComputable) onProgress?.(e.loaded, e.total);
     };
+    const cleanup = () => clearInterval(stallTimer);
     xhr.onload = () => {
+      cleanup();
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else reject(new ApiClientError(`R2 từ chối upload (${xhr.status}).`, xhr.status, "r2_rejected"));
     };
     // onerror = loi mang hoac CORS -> engine se fallback sang proxy
-    xhr.onerror = () => reject(new ApiClientError("Không upload trực tiếp được (CORS/mạng).", 0, "network"));
-    xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
+    xhr.onerror = () => {
+      cleanup();
+      reject(new ApiClientError("Không upload trực tiếp được (CORS/mạng).", 0, "network"));
+    };
+    xhr.ontimeout = () => {
+      cleanup();
+      reject(new ApiClientError(`Upload quá ${Math.round(timeoutMs / 1000)}s — thử lại.`, 0, "timeout"));
+    };
+    xhr.onabort = () => {
+      cleanup();
+      if (stalled) {
+        reject(new ApiClientError("Upload bị đình trệ (không có dữ liệu) — thử lại.", 0, "stalled"));
+        return;
+      }
+      reject(new DOMException("Aborted", "AbortError"));
+    };
     signal?.addEventListener("abort", () => xhr.abort());
     xhr.send(blob);
   });

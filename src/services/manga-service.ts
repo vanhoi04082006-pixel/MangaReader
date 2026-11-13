@@ -10,11 +10,43 @@ import { ensureGenres } from "@/services/genre-service";
 import { ensureProfile } from "@/services/profile-service";
 import { safeDeleteObjects, removeMetadataIfDeleted } from "@/services/storage-service";
 import type { MangaCreateInput, MangaUpdateInput, MangaStatus } from "@/schemas";
-import type { MangaSummaryDto, MangaDetailDto, Paginated } from "@/types";
+import type { MangaSummaryDto, MangaDetailDto, DuplicateMatchDto, Paginated } from "@/types";
 import { naturalCompare } from "@/utils/natural-sort";
 
 function textContains(value: string): string {
   return value; // PostgREST: use ilike for case-insensitive
+}
+
+// -------------------------------------------------------------
+// Cot mangas.source_url (migration 0002) — TU KIEM TRA ton tai.
+// Vercel co the deploy truoc khi migration chay tren Supabase;
+// probe 1 lan va cache ket qua de deploy theo bat ky thu tu nao.
+// -------------------------------------------------------------
+let sourceUrlColumnCache: boolean | null = null;
+
+export async function mangaSupportsSourceUrl(): Promise<boolean> {
+  if (sourceUrlColumnCache !== null) return sourceUrlColumnCache;
+  try {
+    const { error } = await supabase.from("mangas").select("source_url").limit(1);
+    sourceUrlColumnCache = !error; // PGRST204 (column khong ton tai) -> false
+  } catch {
+    sourceUrlColumnCache = false;
+  }
+  return sourceUrlColumnCache;
+}
+
+/**
+ * Chuẩn hóa tên để so khớp truyện trùng: bỏ dấu tiếng Việt, lowercase,
+ * chỉ giữ chữ+số ("Roubaitei (Hololive)" ≈ "roubaitei hololive").
+ */
+export function normalizeTitleForMatch(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[đĐ]/g, "d")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 interface ListParams {
@@ -179,11 +211,20 @@ export async function listMangas(params: ListParams): Promise<Paginated<MangaSum
 export async function getMangaDetail(mangaId: string, userId: string): Promise<MangaDetailDto | null> {
   const summaries = await getMangaSummaries([mangaId], userId);
   if (summaries.length === 0) return null;
-  const { data: manga } = await supabase
+  const hasSourceUrl = await mangaSupportsSourceUrl();
+  const { data } = await supabase
     .from("mangas")
-    .select("alternative_titles, description, artist, publication_year")
+    .select(`alternative_titles, description, artist, publication_year${hasSourceUrl ? ", source_url" : ""}`)
     .eq("id", mangaId)
     .maybeSingle();
+  // Select động (cột source_url tuy theo migration) -> mat inference, cast ro ràng
+  const manga = data as {
+    alternative_titles: string | null;
+    description: string | null;
+    artist: string | null;
+    publication_year: number | null;
+    source_url?: string | null;
+  } | null;
   if (!manga) return null;
   const { data: storageAgg } = await supabase
     .from("storage_objects")
@@ -197,12 +238,14 @@ export async function getMangaDetail(mangaId: string, userId: string): Promise<M
     description: manga.description,
     artist: manga.artist,
     publicationYear: manga.publication_year,
+    sourceUrl: manga.source_url ?? null,
     sizeBytes,
   };
 }
 
 export async function createManga(input: MangaCreateInput) {
   const genreMap = await ensureGenres(input.genres ?? []);
+  const withSourceUrl = input.sourceUrl && (await mangaSupportsSourceUrl());
   const { data: manga, error } = await supabase
     .from("mangas")
     .insert({
@@ -213,6 +256,7 @@ export async function createManga(input: MangaCreateInput) {
       artist: input.artist ?? null,
       status: input.status ?? "ONGOING",
       publication_year: input.publicationYear ?? null,
+      ...(withSourceUrl ? { source_url: input.sourceUrl ?? null } : {}),
     })
     .select()
     .single();
@@ -237,6 +281,9 @@ export async function updateManga(mangaId: string, input: MangaUpdateInput) {
   if (input.artist !== undefined) data.artist = input.artist ?? null;
   if (input.status !== undefined) data.status = input.status;
   if (input.publicationYear !== undefined) data.publication_year = input.publicationYear ?? null;
+  if (input.sourceUrl !== undefined && (await mangaSupportsSourceUrl())) {
+    data.source_url = input.sourceUrl ?? null;
+  }
 
   if (Object.keys(data).length > 0) {
     await supabase.from("mangas").update(data).eq("id", mangaId);
@@ -350,4 +397,62 @@ export async function getChapterOrder(mangaId: string): Promise<Array<{ id: stri
   return (chapters ?? [])
     .map((c: any) => ({ id: c.id, chapterNumber: c.chapter_number }))
     .sort((a, b) => naturalCompare(a.chapterNumber, b.chapterNumber));
+}
+
+// -------------------------------------------------------------
+// CHECK TRÙNG TRUYỆN (batch import / thêm thủ công)
+// So khớp: tên chuẩn hóa (bỏ dấu, chỉ chữ+số) với title + từng tên
+// khác, HOẶC URL nguồn trùng nhau. Chỉ chọn vài cột nhỏ nên nhẹ dù
+// thư viện lớn (phân trang 1000 dòng/lần theo giới hạn PostgREST).
+// -------------------------------------------------------------
+
+const DUP_PAGE_SIZE = 1000;
+
+export async function findMangaDuplicates(params: {
+  title: string;
+  sourceUrl?: string;
+}): Promise<DuplicateMatchDto[]> {
+  const hasSourceUrl = await mangaSupportsSourceUrl();
+  const cols = `id, title, alternative_titles${hasSourceUrl ? ", source_url" : ""}`;
+
+  const rows: any[] = [];
+  for (let offset = 0; offset < 100_000; offset += DUP_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("mangas")
+      .select(cols)
+      .range(offset, offset + DUP_PAGE_SIZE - 1);
+    if (error) throw new ApiError(`Không lấy được thư viện để kiểm tra trùng: ${error.message}`, 500);
+    rows.push(...(data ?? []));
+    if (!data || data.length < DUP_PAGE_SIZE) break;
+  }
+
+  const normTitle = normalizeTitleForMatch(params.title);
+  if (!normTitle) return [];
+  const sourceUrl = params.sourceUrl?.trim() || null;
+
+  const matches: DuplicateMatchDto[] = [];
+  for (const m of rows) {
+    let by: DuplicateMatchDto["by"] | null = null;
+
+    if (sourceUrl && hasSourceUrl && m.source_url && String(m.source_url).trim() === sourceUrl) {
+      by = "sourceUrl";
+    } else if (normalizeTitleForMatch(m.title ?? "") === normTitle) {
+      by = "title";
+    } else {
+      // Tách tên khác theo ; , / | — so khớp từng tên
+      const alts = String(m.alternative_titles ?? "").split(/[;,/|]+/);
+      if (alts.some((a) => normalizeTitleForMatch(a) === normTitle)) by = "altTitle";
+    }
+
+    if (by) {
+      matches.push({
+        id: m.id,
+        title: m.title,
+        alternativeTitles: m.alternative_titles ?? null,
+        sourceUrl: m.source_url ?? null,
+        by,
+      });
+    }
+  }
+  return matches;
 }

@@ -44,6 +44,8 @@ export interface ParsedMangaMeta {
   status: MangaStatus;
   description: string | null;
   genres: string[];
+  /** "Nguồn" trong info.txt — dung de nhan dien truyen trung khi import */
+  sourceUrl: string | null;
 }
 
 export interface ParsedManga {
@@ -89,6 +91,7 @@ export interface InfoTxtFields {
   author?: string;
   status?: string;
   description?: string;
+  sourceUrl?: string;
 }
 
 /**
@@ -114,6 +117,7 @@ export function parseInfoTxt(text: string): InfoTxtFields {
     author: raw["tac gia"] ?? raw["author"] ?? raw["artist"],
     status: raw["tinh trang"] ?? raw["status"],
     description: raw["mo ta"] ?? raw["description"],
+    sourceUrl: raw["nguon"] ?? raw["nguon goc"] ?? raw["source"] ?? raw["source url"] ?? raw["link"],
   };
 }
 
@@ -245,6 +249,7 @@ async function buildMangaFromNode(node: FolderNode): Promise<ParsedManga> {
     status: "ONGOING",
     description: null,
     genres: [],
+    sourceUrl: null,
   };
   let title = node.name;
   let hasInfoFile = false;
@@ -262,6 +267,7 @@ async function buildMangaFromNode(node: FolderNode): Promise<ParsedManga> {
       meta.status = mapStatus(fields.status);
       meta.description = fields.description?.trim().slice(0, 8000) || null;
       meta.genres = parseGenres(fields.genres);
+      meta.sourceUrl = fields.sourceUrl?.trim().slice(0, 500) || null;
     } catch {
       warnings.push("Không đọc được info.txt.");
     }
