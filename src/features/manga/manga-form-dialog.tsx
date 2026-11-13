@@ -22,7 +22,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useCreateManga, useUpdateManga, useGenres, toastMutationError } from "@/hooks/queries";
-import { api, putToR2, uploadViaProxy, ApiClientError } from "@/lib/client/api";
+import { uploadCoverToR2 } from "@/features/upload/cover-upload";
 import { MANGA_STATUSES, type MangaStatus } from "@/schemas";
 import type { MangaDetailDto } from "@/types";
 import { STATUS_LABELS } from "@/components/manga/manga-card";
@@ -124,37 +124,6 @@ export function MangaFormDialog({
     }
   };
 
-  /** Upload bia: presign -> (truc tiep R2 | proxy) -> finalize */
-  const uploadCover = async (mangaId: string, file: File): Promise<void> => {
-    const presign = await api.post<{ objectKey: string; uploadUrl: string }>(
-      "/api/uploads/presign",
-      {
-        kind: "COVER",
-        mangaId,
-        fileName: file.name,
-        mimeType: file.type,
-        fileSize: file.size,
-      }
-    );
-    try {
-      await putToR2(presign.uploadUrl, file, file.type);
-    } catch (err) {
-      if (err instanceof ApiClientError && (err.code === "network" || err.status === 0)) {
-        // CORS/mang -> proxy qua server
-        await uploadViaProxy(presign.objectKey, file, file.type);
-      } else {
-        throw err;
-      }
-    }
-    await api.post(`/api/mangas/${mangaId}/cover`, {
-      mangaId,
-      objectKey: presign.objectKey,
-      fileName: file.name,
-      mimeType: file.type,
-      fileSize: file.size,
-    });
-  };
-
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
@@ -174,14 +143,14 @@ export function MangaFormDialog({
       if (editing) {
         await updateManga.mutateAsync({ id: editing.id, input: payload });
         if (coverFile) {
-          await uploadCover(editing.id, coverFile);
+          await uploadCoverToR2(editing.id, coverFile);
         }
         toast.success("Đã cập nhật thông tin truyện.");
       } else {
         const created = await createManga.mutateAsync(payload);
         if (coverFile) {
           try {
-            await uploadCover(created.id, coverFile);
+            await uploadCoverToR2(created.id, coverFile);
           } catch {
             toast.warning("Đã tạo truyện nhưng upload ảnh bìa thất bại — thử lại ở trang chi tiết.");
           }
@@ -274,7 +243,7 @@ export function MangaFormDialog({
                   placeholder="Đội thủy quân mũ rơm, Vua hải tặc..."
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="manga-author">Tác giả</Label>
                   <Input
@@ -293,7 +262,7 @@ export function MangaFormDialog({
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="manga-status">Trạng thái</Label>
                   <Select value={status} onValueChange={(v) => setStatus(v as MangaStatus)}>
@@ -348,12 +317,12 @@ export function MangaFormDialog({
                 ))}
               </div>
             )}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Input
                 value={genreSearch}
                 onChange={(e) => setGenreSearch(e.target.value)}
                 placeholder="Tìm thể loại..."
-                className="h-9"
+                className="h-9 min-w-0 flex-1 sm:max-w-40"
               />
               <Input
                 value={newGenre}
@@ -365,7 +334,7 @@ export function MangaFormDialog({
                   }
                 }}
                 placeholder="Thể loại mới..."
-                className="h-9"
+                className="h-9 min-w-0 flex-1 sm:max-w-40"
               />
               <Button type="button" variant="outline" size="sm" className="h-9 gap-1" onClick={addNewGenre}>
                 <Plus className="h-3.5 w-3.5" />

@@ -17,6 +17,13 @@ interface CoverImageProps {
  */
 export function CoverImage({ src, alt, className }: CoverImageProps) {
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
+  const [prevSrc, setPrevSrc] = useState(src);
+
+  // Reset trạng thái khi đổi nguồn ảnh (presigned URL thay đổi) — derived state pattern
+  if (prevSrc !== src) {
+    setPrevSrc(src);
+    setStatus("loading");
+  }
 
   if (!src || status === "error") {
     return (

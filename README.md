@@ -27,6 +27,11 @@ Website đọc truyện tranh cá nhân (single-admin) với lưu trữ ảnh tr
 
 ## 1. Tính năng
 
+### Giao diện responsive (mobile-first)
+- **Thanh tab dưới cùng trên điện thoại** (Tổng quan / Thư viện / Yêu thích / Lịch sử / Thêm truyện) — thay cho drawer menu, tôn trọng safe-area (tai thỏ); desktop giữ sidebar.
+- Grid thư viện co giãn theo màn hình (2 cột ≥320px → 7 cột 2XL), card luôn hiện số chương/trang trên thiết bị cảm ứng (không phụ thuộc hover).
+- Header hiển thị logo trên mobile, nút hành động co gọn (chỉ icon) ở màn hẹp, reader toolbar gọn + ẩn nút toàn màn hình trên mobile, tôn trọng `prefers-reduced-motion`.
+
 ### Xác thực & phân quyền (single-admin)
 - Đăng nhập bằng email/mật khẩu qua **Supabase Auth**. Chế độ `AUTH_PROVIDER=local` (JWT tự cấp) **chỉ dùng cho dev** — production tự chối (fail-closed).
 - **Không có trang đăng ký** — chỉ duy nhất tài khoản admin (`ADMIN_EMAIL`), bootstrap qua `bun run scripts/bootstrap-admin.ts` (tách khỏi luồng login thường).
@@ -41,14 +46,49 @@ Website đọc truyện tranh cá nhân (single-admin) với lưu trữ ảnh tr
 - Sắp xếp: tên, ngày thêm, ngày cập nhật, lần đọc gần nhất. Phân trang.
 
 ### Upload (kiến trúc serverless-friendly)
+- **Nhập hàng loạt từ thư mục** (`#/upload`, tab mặc định): chọn 1 bộ truyện hoặc thư mục cha chứa nhiều bộ — tự nhận diện cấu trúc, xem trước rồi nhập toàn bộ. Xem chi tiết [mục riêng](#nhập-hàng-loạt-từ-thư-mục) bên dưới.
 - **ZIP**: parser central-directory tự viết — đọc index trước (không giải nén cả archive vào RAM), lọc file rác (`__MACOSX`, file hệ thống), giới hạn 3000 ảnh/chương + chặn decompression bomb (entry giải nén > 100MB bị bỏ qua), natural sort (**`2.jpg` < `10.jpg`**), giải nén + upload từng trang.
-- **Thư mục** (`webkitdirectory`) và chọn từng ảnh.
+- **Thư mục** (`webkitdirectory`) và chọn từng ảnh (tab "Upload từng chương").
 - Presigned PUT trực tiếp browser → R2 (**ký kèm Content-Length**); fallback qua proxy server **chỉ cho file ≤ 4MB** (giới hạn body của Vercel) — file lớn bắt buộc presigned PUT (cần CORS cho bucket).
 - Proxy đếm **byte thực tế** khi streaming, yêu cầu key đang `PENDING`, đúng namespace + MIME, kích thước thực phải khớp khai báo.
 - **Finalize có xác minh**: trước khi ghi nhận trang, server HeadObject từng object trên R2 — kiểm tra tồn tại, đúng kích thước, đúng MIME, đúng manga/chapter.
 - Concurrency 3, retry (không presign lại — tái dùng key), pause/resume, hủy + dọn file, tiến độ từng file + tổng (tốc độ, ETA), capture kích thước ảnh.
 - **Quota 100GB kiểm tra server-side** khi presign (tính cả upload PENDING đang sống).
 - Track mọi object đã cấp presign (bảng `storage_objects`) → phát hiện + dọn file mồ côi.
+
+### Nhập hàng loạt từ thư mục
+
+Tại **#/upload** → tab **"Nhập nhiều truyện từ thư mục"**: chọn (hoặc kéo-thả) thư mục — có thể chọn ngay một bộ truyện hoặc thư mục **cha** chứa nhiều bộ. Ứng dụng tự nhận diện từng bộ, hiển thị danh sách xem trước (bìa, metadata, số chương/trang, cảnh báo) rồi nhập tuần tự: tạo truyện → upload bìa → tạo chương → upload + finalize từng chương.
+
+Cấu trúc mỗi bộ truyện (quy ước hentaivn):
+
+```
+Roubaitei (Hololive)/     ← tên thư mục = tên truyện
+├── info.txt              ← metadata ("Key: value" mỗi dòng)
+├── cover.jpg             ← ảnh bìa (jpg/png/webp/avif/gif đều được)
+├── Chương 1/             ← mỗi thư mục con = 1 chương (tên = tên chương)
+│   ├── 1.jpg
+│   ├── 2.jpg ...         ← ảnh đánh số → xếp theo thứ tự tự nhiên (2 < 10)
+└── Chương 2/ ...
+```
+
+Ánh xạ trường `info.txt` (thiếu trường nào thì bỏ trống; trường web không hỗ trợ thì **bỏ qua**, không báo lỗi):
+
+| info.txt | Trường trên web |
+|---|---|
+| `Tên` | Tên truyện (thiếu → dùng tên thư mục) |
+| `Tên Khác` | Tên khác |
+| `Thể Loại` | Thể loại (tách dấu phẩy, tự tạo genre mới) |
+| `Tác giả` | Tác giả |
+| `Tình Trạng` | Trạng thái ("Đã hoàn thành" → Hoàn thành, "Đang tiến hành" → Đang tiến hành, "Tạm ngưng" → Tạm dừng, "Drop" → Drop; mặc định Đang tiến hành) |
+| `Nhóm dịch`, `Lượt xem`, `Update`, `Nguồn` | *Bỏ qua* (web không sử dụng) |
+
+Chi tiết xử lý:
+- Số chương được suy ra từ tên thư mục ("Chương 12" → 12, "5.5" → 5.5, "Extra" → "Extra").
+- Tùy chọn **"Bỏ qua truyện đã có trong thư viện"** (bật mặc định) — trùng tên thì bỏ qua, tránh nhập đôi khi chạy lại.
+- Lỗi một truyện **không chặn** các truyện sau; nút "Nhập lại truyện lỗi" chỉ chạy lại phần chưa xong (chương đã xong không bị tạo lại — chương trùng số được tái dùng nếu rỗng).
+- Giới hạn presign (1000 ảnh / 10 phút) được xử lý tự động: gặp 429 sẽ chờ rồi thử lại.
+- Hủy giữa chừng an toàn: các object đã presign nhưng chưa finalize được dọn khỏi R2.
 
 ### Đọc truyện
 - **Cuộn dọc** (virtualized — chỉ render trang trong viewport, khôi phục vị trí cuộn).

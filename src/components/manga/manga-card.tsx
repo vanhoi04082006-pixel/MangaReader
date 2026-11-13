@@ -45,8 +45,8 @@ export function MangaCard({ manga, index = 0 }: { manga: MangaSummaryDto; index?
       <div className="relative aspect-[2/3] overflow-hidden rounded-xl border bg-muted shadow-sm transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-xl group-hover:shadow-primary/5 group-hover:ring-1 group-hover:ring-primary/30">
         <CoverImage src={manga.coverUrl} alt={`Bìa truyện ${manga.title}`} />
 
-        {/* Overlay gradian khi hover */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+        {/* Overlay gradient khi hover (chỉ desktop) */}
+        <div className="absolute inset-0 hidden bg-gradient-to-t from-black/85 via-black/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100 md:block" />
 
         {/* The yeu thich */}
         {manga.isFavorite && (
@@ -67,11 +67,13 @@ export function MangaCard({ manga, index = 0 }: { manga: MangaSummaryDto; index?
           </span>
         </div>
 
-        {/* Thong tin hien khi hover */}
-        <div className="absolute inset-x-0 bottom-0 translate-y-2 p-3 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
-          <div className="flex items-center gap-1.5 text-[11px] text-white/90">
+        {/* Số chương — luôn hiện ở mobile (không có hover), translate khi hover ở desktop */}
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 pt-6 opacity-100 md:translate-y-2 md:opacity-0 md:transition-all md:duration-300 md:group-hover:translate-y-0 md:group-hover:opacity-100">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-white/90">
             <Layers className="h-3.5 w-3.5" />
-            {manga.chapterCount} chương · {manga.pageCount.toLocaleString("vi-VN")} trang
+            {manga.chapterCount} chương
+            <span className="opacity-60">·</span>
+            {manga.pageCount.toLocaleString("vi-VN")} trang
           </div>
         </div>
 
@@ -87,18 +89,13 @@ export function MangaCard({ manga, index = 0 }: { manga: MangaSummaryDto; index?
         )}
       </div>
 
-      <div className="mt-2.5 space-y-1 px-0.5">
+      <div className="mt-2 space-y-1 px-0.5">
         <h3 className="line-clamp-2 text-sm font-semibold leading-snug transition-colors group-hover:text-primary">
           {manga.title}
         </h3>
         <p className="truncate text-xs text-muted-foreground">
           {manga.author ?? "Chưa rõ tác giả"}
         </p>
-        {manga.genres.length > 0 && (
-          <p className="truncate text-[11px] text-muted-foreground/70">
-            {manga.genres.slice(0, 3).join(" · ")}
-          </p>
-        )}
       </div>
     </motion.div>
   );
@@ -106,7 +103,7 @@ export function MangaCard({ manga, index = 0 }: { manga: MangaSummaryDto; index?
 
 export function MangaGrid({ mangas }: { mangas: MangaSummaryDto[] }) {
   return (
-    <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+    <div className="grid grid-cols-2 gap-x-3 gap-y-5 min-[420px]:grid-cols-3 sm:gap-x-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
       {mangas.map((m, i) => (
         <MangaCard key={m.id} manga={m} index={i} />
       ))}
@@ -126,7 +123,7 @@ export function MangaListRow({ manga, index = 0 }: { manga: MangaSummaryDto; ind
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.25, delay: Math.min(index * 0.03, 0.3) }}
       onClick={() => navigate(`/manga/${manga.id}`)}
-      className="group flex cursor-pointer items-center gap-4 rounded-xl border bg-card p-3 transition-colors hover:border-primary/30 hover:bg-accent/40"
+      className="group flex cursor-pointer items-center gap-3 rounded-xl border bg-card p-3 transition-colors hover:border-primary/30 hover:bg-accent/40 sm:gap-4"
       role="link"
       tabIndex={0}
       onKeyDown={(e) => {
@@ -142,19 +139,15 @@ export function MangaListRow({ manga, index = 0 }: { manga: MangaSummaryDto; ind
           <h3 className="truncate text-sm font-semibold group-hover:text-primary">{manga.title}</h3>
           {manga.isFavorite && <Heart className="h-3.5 w-3.5 shrink-0 fill-primary text-primary" />}
         </div>
-        <p className="truncate text-xs text-muted-foreground">
-          {manga.author ?? "Chưa rõ tác giả"} · {manga.genres.slice(0, 3).join(", ")}
-        </p>
-        <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
+        <p className="truncate text-xs text-muted-foreground">{manga.author ?? "Chưa rõ tác giả"}</p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:gap-3">
           <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
             {STATUS_LABELS[manga.status]}
           </Badge>
-          <span>{manga.chapterCount} chương</span>
-          {progressPercent > 0 && (
-            <span className="text-primary">
-                  Đang đọc: trang {manga.progress?.pageNumber}/{manga.progress?.pageCount}
-            </span>
-          )}
+          <span className="flex items-center gap-1">
+            <Layers className="h-3 w-3" />
+            {manga.chapterCount} chương
+          </span>
         </div>
       </div>
 

@@ -1076,3 +1076,204 @@ describe("getEnv numeric knobs (STORAGE_QUOTA_GB / SIGNED_URL_EXPIRY_SECONDS)", 
     expect(getEnv().signedUrlExpiry).toBe(604800);
   });
 });
+
+// ---- Folder parser (batch import) ----
+import {
+  parseInfoTxt,
+  mapStatus,
+  parseGenres,
+  parseChapterNumber,
+  buildMangasFromFiles,
+  type FileWithPath,
+} from "../src/features/upload/folder-parser";
+
+function fakeFile(name: string, content = "x", type = "image/jpeg"): File {
+  return new File([content], name, { type });
+}
+
+describe("parseInfoTxt (info.txt hentaivn)", () => {
+  test("parse du lieu day du (mau goc cua nguoi dung)", () => {
+    const text = [
+      "Tên: Roubaitei (Hololive)",
+      "Tên Khác: ",
+      "Thể Loại: Ahegao, Angel, BlowJobs, Deepthroat, Doujinshi, Idol, Mind Break, Nakadashi",
+      "Nhóm dịch: ",
+      "Tác giả: atahuta",
+      "Tình Trạng: Đã hoàn thành",
+      "Lượt xem: 149",
+      "Update: 22:15:02 1/4/2024",
+      "Nguồn: https://hentaivnreal.com/truyen/roubaitei-hololive",
+    ].join("\n");
+    const f = parseInfoTxt(text);
+    expect(f.title).toBe("Roubaitei (Hololive)");
+    expect(f.alternativeTitles).toBe("");
+    expect(f.genres).toBe("Ahegao, Angel, BlowJobs, Deepthroat, Doujinshi, Idol, Mind Break, Nakadashi");
+    expect(f.author).toBe("atahuta");
+    expect(f.status).toBe("Đã hoàn thành");
+    // Các trường web không hỗ trợ (Nhóm dịch/Lượt xem/Update/Nguồn) bị bỏ qua
+    expect((f as Record<string, unknown>).translator).toBeUndefined();
+    expect((f as Record<string, unknown>).views).toBeUndefined();
+    expect((f as Record<string, unknown>).update).toBeUndefined();
+    expect((f as Record<string, unknown>).source).toBeUndefined();
+  });
+
+  test("BOM + CRLF + key co dau hoa thuong + gia tri chua dau hai cham", () => {
+    const text =
+      "\uFEFFTÊN: Roubaitei: Extra Edition\r\nTÁC GIẢ: atahuta\r\nTÌNH TRẠNG: Đang tiến hành\r\n";
+    const f = parseInfoTxt(text);
+    expect(f.title).toBe("Roubaitei: Extra Edition");
+    expect(f.author).toBe("atahuta");
+    expect(f.status).toBe("Đang tiến hành");
+  });
+
+  test("dong khong co dau hai cham / dong trong bi bo qua", () => {
+    const f = parseInfoTxt("Tên: ABC\n dong sai dinh dang \n\nTác giả: X\n: no key\n");
+    expect(f.title).toBe("ABC");
+    expect(f.author).toBe("X");
+  });
+});
+
+describe("mapStatus (Tình Trạng -> MangaStatus)", () => {
+  test("cac gia tri pho bien", () => {
+    expect(mapStatus("Đã hoàn thành")).toBe("COMPLETED");
+    expect(mapStatus("Đang tiến hành")).toBe("ONGOING");
+    expect(mapStatus("Đang cập nhật")).toBe("ONGOING");
+    expect(mapStatus("Tạm ngưng")).toBe("HIATUS");
+    expect(mapStatus("tam dung")).toBe("HIATUS");
+    expect(mapStatus("Drop")).toBe("DROPPED");
+    expect(mapStatus("đã drop")).toBe("DROPPED");
+  });
+  test("thieu / khong nhan dien -> ONGOING (mac dinh)", () => {
+    expect(mapStatus(undefined)).toBe("ONGOING");
+    expect(mapStatus("")).toBe("ONGOING");
+    expect(mapStatus("Chua ro")).toBe("ONGOING");
+  });
+});
+
+describe("parseGenres (Thể Loại)", () => {
+  test("tach dau phay/phan cach phay cham phay, trim, dedupe khong phan biet hoa", () => {
+    const g = parseGenres("Ahegao, Angel; BlowJobs , angel , Deepthroat");
+    expect(g).toEqual(["Ahegao", "Angel", "BlowJobs", "Deepthroat"]);
+  });
+  test("gioi han 20 genre, moi genre toi da 60 ky tu", () => {
+    const many = Array.from({ length: 30 }, (_, i) => `G${i}`).join(", ");
+    expect(parseGenres(many)).toHaveLength(20);
+    expect(parseGenres(["A".repeat(100)].join(", "))[0].length).toBeLessThanOrEqual(60);
+  });
+  test("rong / undefined -> mang rong", () => {
+    expect(parseGenres(undefined)).toEqual([]);
+    expect(parseGenres("  ")).toEqual([]);
+  });
+});
+
+describe("parseChapterNumber (ten thu muc chuong)", () => {
+  test("so thuan, chuong/chapter prefix, so thap phan", () => {
+    expect(parseChapterNumber("12")).toBe("12");
+    expect(parseChapterNumber("Chương 12")).toBe("12");
+    expect(parseChapterNumber("chapter 5")).toBe("5");
+    expect(parseChapterNumber("Ch. 5.5")).toBe("5.5");
+    expect(parseChapterNumber("v2 c005")).toBe("005");
+    expect(parseChapterNumber("023")).toBe("023");
+  });
+  test("khong co so -> dung ten thu muc (toi da 50 ky tu)", () => {
+    expect(parseChapterNumber("Extra")).toBe("Extra");
+    expect(parseChapterNumber("  Omake  ")).toBe("Omake");
+    expect(parseChapterNumber("E".repeat(80)).length).toBe(50);
+  });
+});
+
+describe("buildMangasFromFiles (cau truc thu muc)", () => {
+  test("1 thu muc truyen truc tiep: info.txt + cover + 2 chuong, sort trang tu nhien", async () => {
+    const items: FileWithPath[] = [
+      { file: fakeFile("info.txt", "Tên: Roubaitei (Hololive)\nTác giả: atahuta\nTình Trạng: Đã hoàn thành\nThể Loại: Ahegao, Angel\n", "text/plain"), path: "Roubaitei (Hololive)/info.txt" },
+      { file: fakeFile("cover.jpg"), path: "Roubaitei (Hololive)/cover.jpg" },
+      { file: fakeFile("1.jpg"), path: "Roubaitei (Hololive)/Chương 1/1.jpg" },
+      { file: fakeFile("2.jpg"), path: "Roubaitei (Hololive)/Chương 1/2.jpg" },
+      { file: fakeFile("10.jpg"), path: "Roubaitei (Hololive)/Chương 1/10.jpg" },
+      { file: fakeFile("3.jpg"), path: "Roubaitei (Hololive)/Chương 1/3.jpg" },
+      { file: fakeFile("1.jpg"), path: "Roubaitei (Hololive)/Chương 2/1.jpg" },
+    ];
+    const { mangas, warnings } = await buildMangasFromFiles(items);
+    expect(warnings).toHaveLength(0);
+    expect(mangas).toHaveLength(1);
+    const m = mangas[0];
+    expect(m.title).toBe("Roubaitei (Hololive)");
+    expect(m.folderName).toBe("Roubaitei (Hololive)");
+    expect(m.meta.author).toBe("atahuta");
+    expect(m.meta.status).toBe("COMPLETED");
+    expect(m.meta.genres).toEqual(["Ahegao", "Angel"]);
+    expect(m.coverFile?.name).toBe("cover.jpg");
+    expect(m.chapters).toHaveLength(2);
+    expect(m.chapters[0].number).toBe("1");
+    expect(m.chapters[0].name).toBe("Chương 1");
+    // Natural sort: 1, 2, 3, 10 (khong phai 1, 10, 2, 3)
+    expect(m.chapters[0].files.map((f) => f.name)).toEqual(["1.jpg", "2.jpg", "3.jpg", "10.jpg"]);
+    expect(m.chapters[1].number).toBe("2");
+  });
+
+  test("thu muc CHA chua nhieu bo truyen — moi thu muc con la 1 bo", async () => {
+    const items: FileWithPath[] = [
+      { file: fakeFile("info.txt", "Tên: Oni Seki\n", "text/plain"), path: "BoSuuTap/Oni Seki (Hololive)/info.txt" },
+      { file: fakeFile("cover.png", "x", "image/png"), path: "BoSuuTap/Oni Seki (Hololive)/cover.png" },
+      { file: fakeFile("1.jpg"), path: "BoSuuTap/Oni Seki (Hololive)/Chương 1/1.jpg" },
+      { file: fakeFile("info.txt", "Tên: Roubaitei\n", "text/plain"), path: "BoSuuTap/Roubaitei (Hololive)/info.txt" },
+      { file: fakeFile("cover.webp", "x", "image/webp"), path: "BoSuuTap/Roubaitei (Hololive)/cover.webp" },
+      { file: fakeFile("1.jpg"), path: "BoSuuTap/Roubaitei (Hololive)/Chapter 1/1.jpg" },
+    ];
+    const { mangas } = await buildMangasFromFiles(items);
+    expect(mangas).toHaveLength(2);
+    expect(mangas.map((m) => m.folderName)).toEqual(["Oni Seki (Hololive)", "Roubaitei (Hololive)"]);
+  });
+
+  test("thieu info.txt -> dung ten thu muc, co canh bao; thieu cover -> canh bao", async () => {
+    const items: FileWithPath[] = [
+      { file: fakeFile("1.jpg"), path: "No Info Manga/Chương 1/1.jpg" },
+    ];
+    const { mangas } = await buildMangasFromFiles(items);
+    expect(mangas).toHaveLength(1);
+    expect(mangas[0].title).toBe("No Info Manga");
+    expect(mangas[0].hasInfoFile).toBe(false);
+    expect(mangas[0].warnings.some((w) => w.includes("info.txt"))).toBe(true);
+    expect(mangas[0].warnings.some((w) => w.includes("bìa"))).toBe(true);
+    expect(mangas[0].meta.status).toBe("ONGOING");
+  });
+
+  test("cover moi dinh dang anh deu duoc nhan (png/webp), uu tien ten cover.*", async () => {
+    const items: FileWithPath[] = [
+      { file: fakeFile("cover-1.png", "x", "image/png"), path: "M/cover-1.png" },
+      { file: fakeFile("a.jpg"), path: "M/a.jpg" },
+      { file: fakeFile("1.jpg"), path: "M/Chương 1/1.jpg" },
+    ];
+    const { mangas } = await buildMangasFromFiles(items);
+    expect(mangas[0].coverFile?.name).toBe("cover-1.png");
+  });
+
+  test("file rac macOS/Windows bi loai; chuong khong co anh bi bo qua + canh bao", async () => {
+    const items: FileWithPath[] = [
+      { file: fakeFile("info.txt", "Tên: X\n", "text/plain"), path: "X/info.txt" },
+      { file: fakeFile("cover.jpg"), path: "X/cover.jpg" },
+      { file: fakeFile("junk", "x", "application/octet-stream"), path: "X/__MACOSX/cover.jpg" },
+      { file: fakeFile("junk2", "x", "application/octet-stream"), path: "X/._1.jpg" },
+      { file: fakeFile("note.txt", "x", "text/plain"), path: "X/Rỗng/note.txt" },
+      { file: fakeFile("1.jpg"), path: "X/Chương 1/1.jpg" },
+    ];
+    const { mangas, warnings } = await buildMangasFromFiles(items);
+    expect(mangas).toHaveLength(1);
+    expect(mangas[0].chapters).toHaveLength(1);
+    // Cảnh báo về thư mục rỗng nằm trong warnings CỦA TRUYỆN (không phải global)
+    expect(mangas[0].warnings.some((w) => w.includes("Rỗng"))).toBe(true);
+    expect(warnings).toHaveLength(0);
+  });
+
+  test("nhieu chuong cung so -> khong crash, giu nguyen ca hai (server se tu xu ly 409)", async () => {
+    const items: FileWithPath[] = [
+      { file: fakeFile("cover.jpg"), path: "M/cover.jpg" },
+      { file: fakeFile("1.jpg"), path: "M/1/1.jpg" },
+      { file: fakeFile("1.jpg"), path: "M/Chapter 1/1.jpg" },
+    ];
+    const { mangas } = await buildMangasFromFiles(items);
+    expect(mangas).toHaveLength(1);
+    expect(mangas[0].chapters).toHaveLength(2);
+    expect(new Set(mangas[0].chapters.map((c) => c.number)).size).toBe(1);
+  });
+});

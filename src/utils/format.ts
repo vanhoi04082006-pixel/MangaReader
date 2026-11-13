@@ -26,6 +26,8 @@ export function formatPercent(value: number): string {
 /** "vừa xong", "5 phút trước", "hôm qua", ... */
 export function formatRelativeTime(date: string | Date): string {
   const d = typeof date === "string" ? new Date(date) : date;
+  // Phòng thủ: dữ liệu thiếu/sai định dạng không làm sập cả trang
+  if (!d || Number.isNaN(d.getTime())) return "—";
   const diff = Date.now() - d.getTime();
   const sec = Math.floor(diff / 1000);
   if (sec < 45) return "vừa xong";
@@ -45,6 +47,7 @@ export function formatRelativeTime(date: string | Date): string {
 
 export function formatDate(date: string | Date): string {
   const d = typeof date === "string" ? new Date(date) : date;
+  if (!d || Number.isNaN(d.getTime())) return "—";
   return new Intl.DateTimeFormat("vi-VN", {
     day: "2-digit",
     month: "2-digit",
@@ -54,6 +57,7 @@ export function formatDate(date: string | Date): string {
 
 export function formatDateTime(date: string | Date): string {
   const d = typeof date === "string" ? new Date(date) : date;
+  if (!d || Number.isNaN(d.getTime())) return "—";
   return new Intl.DateTimeFormat("vi-VN", {
     day: "2-digit",
     month: "2-digit",

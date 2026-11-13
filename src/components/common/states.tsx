@@ -20,7 +20,7 @@ export function EmptyState({ icon: Icon, title, description, action, compact }: 
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
       className={`flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border text-center ${
-        compact ? "px-6 py-10" : "px-6 py-20"
+        compact ? "px-6 py-10" : "px-6 py-16 sm:py-20"
       }`}
     >
       <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-muted">
@@ -45,7 +45,7 @@ interface ErrorStateProps {
 
 export function ErrorState({ title = "Đã xảy ra lỗi", message, onRetry }: ErrorStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-6 py-16 text-center">
+    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-6 py-12 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-destructive/10">
         <AlertTriangle className="h-6 w-6 text-destructive" />
       </div>

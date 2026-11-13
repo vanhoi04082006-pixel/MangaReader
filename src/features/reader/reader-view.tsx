@@ -217,7 +217,9 @@ const isScrollingRef = useRef(false);
   // ---------- Navigation ----------
   const goToChapter = useCallback(
     (nextChapterId: string) => {
-      navigate(`/reader/${mangaId}/${nextChapterId}`);
+      // replace: tránh chồng history entry khi đổi chương trong reader —
+      // để nút Thoát (history.back) quay về trang chi tiết truyện
+      navigate(`/reader/${mangaId}/${nextChapterId}`, { replace: true });
     },
     [mangaId]
   );
@@ -395,21 +397,21 @@ const isScrollingRef = useRef(false);
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 16 }}
             transition={{ duration: 0.2 }}
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]"
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center px-2 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] sm:px-3"
           >
-            <div className="pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-1.5 rounded-xl border bg-background/85 p-1.5 shadow-lg backdrop-blur-md">
-              <Button variant="ghost" size="icon" className="h-9 w-9" onClick={exitReader} aria-label="Thoát">
+            <div className="pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-1 rounded-xl border bg-background/85 p-1.5 shadow-lg backdrop-blur-md">
+              <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={exitReader} aria-label="Thoát">
                 <X className="h-4.5 w-4.5" />
               </Button>
 
               <Popover open={chapterListOpen} onOpenChange={setChapterListOpen}>
                 <PopoverTrigger asChild>
-                  <button className="flex min-w-0 items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-semibold transition-colors hover:bg-accent">
-                    <span className="max-w-32 truncate text-muted-foreground">{payload.manga.title}</span>
-                    <span className="rounded bg-primary/15 px-1.5 py-0.5 font-mono text-xs font-bold text-primary">
+                  <button className="flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm font-semibold transition-colors hover:bg-accent sm:gap-2 sm:px-3">
+                    <span className="max-w-24 truncate text-muted-foreground sm:max-w-32">{payload.manga.title}</span>
+                    <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 font-mono text-xs font-bold text-primary">
                       Ch. {payload.chapter.chapterNumber}
                     </span>
-                    <ChevronRight className="h-3.5 w-3.5 rotate-90 opacity-50" />
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 rotate-90 opacity-50" />
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-64 p-0">
@@ -437,7 +439,7 @@ const isScrollingRef = useRef(false);
                 </PopoverContent>
               </Popover>
 
-              <div className="ml-auto flex items-center gap-1">
+              <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
                 <Button
                   variant="ghost"
                   size="icon"
@@ -450,7 +452,7 @@ const isScrollingRef = useRef(false);
                   <ChevronLeft className="h-4.5 w-4.5" />
                 </Button>
 
-                <span className="min-w-16 text-center font-mono text-xs font-semibold tabular-nums text-muted-foreground">
+                <span className="min-w-14 text-center font-mono text-xs font-semibold tabular-nums text-muted-foreground">
                   {settings.mode === "paged" ? `${currentPage}/${pageCount}` : `${Math.min(currentPage, pageCount)}/${pageCount}`}
                 </span>
 
@@ -466,7 +468,7 @@ const isScrollingRef = useRef(false);
                   <ChevronRight className="h-4.5 w-4.5" />
                 </Button>
 
-                <div className="mx-1 h-5 w-px bg-border" />
+                <div className="mx-0.5 h-5 w-px bg-border sm:mx-1" />
 
                 <Button
                   variant="ghost"
@@ -493,7 +495,7 @@ const isScrollingRef = useRef(false);
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9"
+                  className="hidden h-9 w-9 sm:inline-flex"
                   onClick={() => void toggleFullscreen()}
                   aria-label="Toàn màn hình"
                   title="Toàn màn hình (F)"

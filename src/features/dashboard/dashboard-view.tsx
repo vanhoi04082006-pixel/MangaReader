@@ -32,21 +32,21 @@ function ContinueReading() {
           Tiếp tục đọc
         </h2>
       </div>
-      <div className="scrollbar-thin -mx-1 flex gap-4 overflow-x-auto px-1 pb-3">
+      <div className="scrollbar-thin -mx-1 flex gap-3 overflow-x-auto px-1 pb-3 sm:gap-4">
         {data.continueReading.map((item) => (
           <motion.button
             key={item.mangaId}
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             whileHover={{ y: -3 }}
-            className="group flex w-56 shrink-0 flex-col gap-2.5 rounded-xl border bg-card p-3 text-left transition-shadow hover:shadow-lg"
+            className="group flex w-44 shrink-0 flex-col gap-2.5 rounded-xl border bg-card p-3 text-left transition-shadow hover:shadow-lg sm:w-56"
             onClick={() => navigate(`/reader/${item.mangaId}/${item.chapterId}`)}
           >
-            <div className="relative h-28 w-full overflow-hidden rounded-lg bg-muted">
+            <div className="relative h-24 w-full overflow-hidden rounded-lg bg-muted sm:h-28">
               <CoverImage src={item.coverUrl} alt={`Bìa ${item.mangaTitle}`} />
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
               <div className="absolute inset-x-2 bottom-2">
-                <p className="truncate text-xs font-semibold text-white">{item.mangaTitle}</p>
+                <p className="line-clamp-2 text-xs font-semibold text-white">{item.mangaTitle}</p>
               </div>
             </div>
             <div>
@@ -93,7 +93,7 @@ export function DashboardView() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-7 sm:space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">
@@ -115,14 +115,14 @@ export function DashboardView() {
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-28 rounded-xl" />
           ))}
         </div>
       ) : data ? (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
             <StatCard
               icon={BookOpen}
               label="Truyện"
@@ -145,14 +145,16 @@ export function DashboardView() {
               icon={HardDrive}
               label="Dung lượng R2"
               value={formatBytes(data.storageUsedBytes)}
-              sub="Hạn mức 100GB"
+              sub={`Hạn mức ${formatBytes(data.storageQuotaBytes, { decimals: 0 })}`}
               accent="amber"
             />
           </div>
 
-          <div className="rounded-xl border bg-card p-5">
+          {/* Lớp bọc là link sang trang Lưu trữ (mobile không có sidebar
+              nên cần lối vào từ dashboard) */}
+          <a href="#/storage" className="block rounded-xl border bg-card p-5 transition-colors hover:border-primary/40">
             <QuotaBar usedBytes={data.storageUsedBytes} quotaBytes={data.storageQuotaBytes} />
-          </div>
+          </a>
 
           <ContinueReading />
 
@@ -177,7 +179,7 @@ export function DashboardView() {
               <EmptyState
                 icon={BookOpen}
                 title="Thư viện đang trống"
-                description="Bắt đầu bằng việc thêm truyện đầu tiên và upload ảnh các chương."
+                description="Thêm nhiều truyện cùng lúc chỉ bằng một thư mục — mỗi thư mục con là một bộ truyện."
                 action={
                   <Button className="gap-2" onClick={() => navigate("/upload")}>
                     <Plus className="h-4 w-4" />

@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -10,9 +9,9 @@ import {
   LayoutDashboard,
   LibraryBig,
   LogOut,
+  Plus,
   Settings,
 } from "lucide-react";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Header } from "@/components/layout/header";
 import { useHashRoute, navigate } from "@/lib/client/hash-router";
 import { useAuthStore } from "@/store/auth-store";
@@ -21,12 +20,14 @@ import type { DashboardDto } from "@/types";
 import { formatBytes } from "@/utils/format";
 import { cn } from "@/lib/utils";
 
+// Mục nav chính — dùng cho sidebar (desktop) + bottom nav (mobile).
+// shortLabel: rút gọn cho bottom nav trên màn hẹp (tránh chữ bị wrap 2 dòng)
 const NAV_ITEMS = [
   { href: "/", label: "Tổng quan", icon: LayoutDashboard, match: (seg: string) => seg === "" },
   { href: "/library", label: "Thư viện", icon: LibraryBig, match: (seg: string) => seg === "library" },
   { href: "/favorites", label: "Yêu thích", icon: Heart, match: (seg: string) => seg === "favorites" },
-  { href: "/history", label: "Lịch sử đọc", icon: History, match: (seg: string) => seg === "history" },
-  { href: "/storage", label: "Lưu trữ", icon: HardDrive, match: (seg: string) => seg === "storage" },
+  { href: "/history", label: "Lịch sử", icon: History, match: (seg: string) => seg === "history" },
+  { href: "/upload", label: "Thêm truyện", shortLabel: "Thêm", icon: Plus, match: (seg: string) => seg === "upload" },
 ];
 
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
@@ -134,7 +135,7 @@ function UserCard({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarContent() {
   const activeSeg = useHashRoute().segments[0] ?? "";
   return (
     <div className="flex h-full flex-col">
@@ -146,15 +147,24 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
       <div className="flex-1 overflow-y-auto scrollbar-thin">
-        <NavList onNavigate={onNavigate} />
+        <NavList />
         <div className="mt-6">
           <p className="px-6 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
             Hệ thống
           </p>
           <nav className="flex flex-col gap-1 px-3">
             <a
+              href="#/storage"
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+                activeSeg === "storage" && "bg-sidebar-accent text-sidebar-accent-foreground"
+              )}
+            >
+              <HardDrive className="h-4.5 w-4.5" />
+              Lưu trữ
+            </a>
+            <a
               href="#/settings"
-              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
                 activeSeg === "settings" && "bg-sidebar-accent text-sidebar-accent-foreground"
@@ -169,32 +179,74 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <StorageMini />
         </div>
       </div>
-      <UserCard onNavigate={onNavigate} />
+      <UserCard />
     </div>
   );
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
-  const [mobileOpen, setMobileOpen] = useState(false);
+/** Thanh tab dưới cùng cho điện thoại (thay cho drawer menu) */
+function BottomNav() {
+  const route = useHashRoute();
+  const activeSeg = route.segments[0] ?? "";
 
   return (
+    <nav
+      aria-label="Điều hướng di động"
+      className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/90 backdrop-blur-md md:hidden"
+      style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+    >
+      <div className="mx-auto flex max-w-lg items-stretch justify-around">
+        {NAV_ITEMS.map((item) => {
+          const active = item.match(activeSeg);
+          return (
+            <a
+              key={item.href}
+              href={`#${item.href}`}
+              aria-label={item.label}
+              aria-current={active ? "page" : undefined}
+              className="relative flex min-w-14 flex-1 flex-col items-center gap-0.5 px-1 pb-1.5 pt-2.5 text-[11px] font-medium transition-colors"
+            >
+              {active && (
+                <motion.span
+                  layoutId="bottomnav-active"
+                  className="absolute top-0 h-0.5 w-8 rounded-full bg-primary"
+                  transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                />
+              )}
+              <item.icon
+                className={cn(
+                  "h-5 w-5 transition-transform",
+                  active ? "scale-110 text-primary" : "text-muted-foreground"
+                )}
+              />
+              <span className={cn(active ? "text-primary" : "text-muted-foreground")}>
+                {item.shortLabel ?? item.label}
+              </span>
+            </a>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  return (
     <div className="min-h-screen bg-background">
+      {/* Sidebar desktop */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-sidebar-border bg-sidebar md:flex md:flex-col">
         <SidebarContent />
       </aside>
 
-      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetContent side="left" className="w-72 border-sidebar-border bg-sidebar p-0">
-          <SidebarContent onNavigate={() => setMobileOpen(false)} />
-        </SheetContent>
-      </Sheet>
-
       <div className="flex min-h-screen flex-col md:pl-60">
-        <Header onMenuClick={() => setMobileOpen(true)} />
-        <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 pb-[calc(4rem_+_env(safe-area-inset-bottom,0px))] pt-4 md:px-8 md:pt-6">
+        <Header />
+        <main className="mx-auto w-full max-w-[1440px] flex-1 px-3 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] pt-4 sm:px-4 md:px-8 md:pb-10 md:pt-6">
           {children}
         </main>
       </div>
+
+      {/* Thanh tab dưới cùng cho điện thoại */}
+      <BottomNav />
     </div>
   );
 }
