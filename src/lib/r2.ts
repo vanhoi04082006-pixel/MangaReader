@@ -96,35 +96,11 @@ export async function presignPut(params: {
   return getSignedUrl(r2(), cmd, { expiresIn: params.expiresIn ?? 15 * 60 });
 }
 
-/** Presigned GET — doc anh co han. KHONG bao gio luu URL nay vao DB.
- *  Co cache trong bo nho theo key (TTL < han URL): URL presigned sinh ra
- *  khac chu ky moi lan -> neu khong cache, browser khong bao gio dung duoc
- *  HTTP cache giua cac lan truy cap (phai tai lai toan bo anh). Cache giu
- *  URL on dinh trong phan lon thoi gian han -> Cache-Control cua object
- *  (max-age 7 ngay) phat huy tac dung, anh hien gan nhu ngay lap tuc. */
-const presignCache = new Map<string, { url: string; expiresAt: number }>();
-const PRESIGN_CACHE_MAX = 2000;
-
+/** Presigned GET — doc anh co han. KHONG bao gio luu URL nay vao DB. */
 export async function presignGet(key: string, expiresIn?: number): Promise<string> {
   const env = getEnv();
-  const ttl = expiresIn ?? env.signedUrlExpiry;
-  const now = Date.now();
-  const hit = presignCache.get(key);
-  if (hit && hit.expiresAt > now) return hit.url;
-
   const cmd = new GetObjectCommand({ Bucket: bucket(), Key: key });
-  const url = await getSignedUrl(r2(), cmd, { expiresIn: ttl });
-
-  // Cache RTL = han URL - 5 phut (phong le dong ho); toi thieu 60s
-  const cacheTtl = Math.max(60, Math.min(ttl, 7 * 24 * 3600) - 300) * 1000;
-  if (presignCache.size >= PRESIGN_CACHE_MAX) {
-    for (const [k, v] of presignCache) {
-      if (v.expiresAt <= now) presignCache.delete(k);
-    }
-    if (presignCache.size >= PRESIGN_CACHE_MAX) presignCache.clear();
-  }
-  presignCache.set(key, { url, expiresAt: now + cacheTtl });
-  return url;
+  return getSignedUrl(r2(), cmd, { expiresIn: expiresIn ?? env.signedUrlExpiry });
 }
 
 export async function presignGetMany(keys: string[], expiresIn?: number): Promise<string[]> {
@@ -140,8 +116,6 @@ export async function deleteObjects(keys: string[]): Promise<{
   /** Key xoa that bai kem ly do. */
   errors: string[];
 }> {
-  // Vo hieu hoa presign cache cho cac key sap xoa (URL cu se 403/404)
-  for (const k of keys) presignCache.delete(k);
   let deleted = 0;
   const deletedKeys: string[] = [];
   const errors: string[] = [];

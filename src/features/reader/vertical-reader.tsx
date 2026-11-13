@@ -105,17 +105,6 @@ export function VerticalReader({
     findIndexAt(offsets, scrollTop + (metrics.height || 900) * 0.4) + 1
   );
 
-  // Prefetch cac trang PHIA TRUOC (ngoai cua so render) — cuon nhanh
-  // khong bi cho anh (viewport chi render +-3 trang quanh vi tri hien tai)
-  useEffect(() => {
-    const from = renderEnd + 1;
-    const to = Math.min(payload.pages.length, from + 4);
-    for (let i = from; i < to; i++) {
-      const img = new Image();
-      img.src = payload.pages[i].url;
-    }
-  }, [renderEnd, payload.pages]);
-
   // Scroll handler (rAF throttle)
   const tickingRef = useRef(false);
   useEffect(() => {
@@ -197,7 +186,6 @@ export function VerticalReader({
                 alt={`Trang ${page.pageNumber}`}
                 fit="width"
                 eager={isNearViewport}
-                lqip={page.lqip}
                 onSourceError={onSourceError}
               />
               {isNearViewport && (

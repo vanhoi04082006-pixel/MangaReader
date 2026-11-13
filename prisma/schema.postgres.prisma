@@ -49,8 +49,6 @@ model Manga {
   publicationYear   Int?      @map("publication_year")
   coverImageKey     String?   @map("cover_image_key")
   sourceUrl         String?   @map("source_url")
-  coverLqip         String?   @map("cover_lqip") // placeholder mo base64 JPEG ~16px (migration 0003)
-  coverColor        String?   @map("cover_color") // mau chu dao cua bia (hex, migration 0003)
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -101,7 +99,6 @@ model Page {
   fileSize   BigInt   @map("file_size") @db.BigInt // bytes
   width      Int?
   height     Int?
-  lqip       String? // placeholder mo base64 JPEG ~16px (migration 0003)
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   chapter Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)

@@ -78,12 +78,7 @@ export function HistoryView() {
                   onClick={() => navigate(`/manga/${h.mangaId}`)}
                   aria-label={`Xem ${h.mangaTitle}`}
                 >
-                  <CoverImage
-                    src={h.coverUrl}
-                    alt={`Bìa ${h.mangaTitle}`}
-                    lqip={h.coverLqip}
-                    color={h.coverColor}
-                  />
+                  <CoverImage src={h.coverUrl} alt={`Bìa ${h.mangaTitle}`} />
                 </button>
                 <div className="min-w-0 flex-1">
                   <button

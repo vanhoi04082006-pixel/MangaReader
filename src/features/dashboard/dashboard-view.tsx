@@ -33,7 +33,7 @@ function ContinueReading() {
         </h2>
       </div>
       <div className="scrollbar-thin -mx-1 flex gap-3 overflow-x-auto px-1 pb-3 sm:gap-4">
-        {data.continueReading.map((item, i) => (
+        {data.continueReading.map((item) => (
           <motion.button
             key={item.mangaId}
             initial={{ opacity: 0, x: 16 }}
@@ -43,13 +43,7 @@ function ContinueReading() {
             onClick={() => navigate(`/reader/${item.mangaId}/${item.chapterId}`)}
           >
             <div className="relative h-24 w-full overflow-hidden rounded-lg bg-muted sm:h-28">
-              <CoverImage
-                src={item.coverUrl}
-                alt={`Bìa ${item.mangaTitle}`}
-                lqip={item.coverLqip}
-                color={item.coverColor}
-                eager={i < 4}
-              />
+              <CoverImage src={item.coverUrl} alt={`Bìa ${item.mangaTitle}`} />
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
               <div className="absolute inset-x-2 bottom-2">
                 <p className="line-clamp-2 text-xs font-semibold text-white">{item.mangaTitle}</p>

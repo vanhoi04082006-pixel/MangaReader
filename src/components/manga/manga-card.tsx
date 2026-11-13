@@ -23,15 +23,11 @@ const STATUS_STYLES: Record<MangaStatus, string> = {
   DROPPED: "bg-zinc-500/15 text-zinc-400 border-zinc-500/20",
 };
 
-/** Số card đầu lưới được tải ưu tiên (eager + high priority) — hiện ngay trên màn hình đầu */
-const EAGER_COUNT = 8;
-
 export function MangaCard({ manga, index = 0 }: { manga: MangaSummaryDto; index?: number }) {
   const progressPercent =
     manga.progress && manga.progress.pageCount > 0
       ? Math.min(100, (manga.progress.pageNumber / manga.progress.pageCount) * 100)
       : 0;
-  const eager = index < EAGER_COUNT;
 
   return (
     <motion.div
@@ -47,13 +43,7 @@ export function MangaCard({ manga, index = 0 }: { manga: MangaSummaryDto; index?
       }}
     >
       <div className="relative aspect-[2/3] overflow-hidden rounded-xl border bg-muted shadow-sm transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-xl group-hover:shadow-primary/5 group-hover:ring-1 group-hover:ring-primary/30">
-        <CoverImage
-          src={manga.coverUrl}
-          alt={`Bìa truyện ${manga.title}`}
-          lqip={manga.coverLqip}
-          color={manga.coverColor}
-          eager={eager}
-        />
+        <CoverImage src={manga.coverUrl} alt={`Bìa truyện ${manga.title}`} />
 
         {/* Overlay gradient khi hover (chỉ desktop) */}
         <div className="absolute inset-0 hidden bg-gradient-to-t from-black/85 via-black/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100 md:block" />
@@ -126,7 +116,6 @@ export function MangaListRow({ manga, index = 0 }: { manga: MangaSummaryDto; ind
     manga.progress && manga.progress.pageCount > 0
       ? Math.min(100, (manga.progress.pageNumber / manga.progress.pageCount) * 100)
       : 0;
-  const eager = index < EAGER_COUNT;
 
   return (
     <motion.div
@@ -142,13 +131,7 @@ export function MangaListRow({ manga, index = 0 }: { manga: MangaSummaryDto; ind
       }}
     >
       <div className="relative h-[84px] w-14 shrink-0 overflow-hidden rounded-md border bg-muted">
-        <CoverImage
-          src={manga.coverUrl}
-          alt={`Bìa ${manga.title}`}
-          lqip={manga.coverLqip}
-          color={manga.coverColor}
-          eager={eager}
-        />
+        <CoverImage src={manga.coverUrl} alt={`Bìa ${manga.title}`} />
       </div>
 
       <div className="min-w-0 flex-1">

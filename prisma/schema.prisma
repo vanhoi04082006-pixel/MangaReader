@@ -43,8 +43,6 @@ model Manga {
   publicationYear   Int?
   coverImageKey     String?
   sourceUrl         String? // "Nguon" tu info.txt — nhan dien truyen trung (migration 0002)
-  coverLqip         String? // placeholder mo base64 JPEG ~16px (migration 0003)
-  coverColor        String? // mau chu dao cua bia (hex, migration 0003)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -93,7 +91,6 @@ model Page {
   fileSize   Int // bytes
   width      Int?
   height     Int?
-  lqip       String? // placeholder mo base64 JPEG ~16px (migration 0003)
   createdAt  DateTime @default(now())
 
   chapter Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)

@@ -19,7 +19,6 @@
     "bootstrap:admin": "bun run scripts/bootstrap-admin.ts",
     "verify:rls": "bun run scripts/verify-rls.ts",
     "r2:setup": "bun run scripts/setup-r2.ts",
-    "backfill:lqip": "bun run scripts/backfill-lqip.ts",
     "test:manga": "bun run scripts/make-test-manga.ts"
   },
   "dependencies": {
