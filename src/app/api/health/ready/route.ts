@@ -4,7 +4,7 @@
 // Khong bao gio cong khai: gia tri secret, bucket khong can thiet,
 // danh sach bien thieu, chi tiet exception.
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { headBucket } from "@/lib/r2";
 import { missingEnvVars, getEnv, isValidUuid } from "@/lib/env";
 import { requireAdmin, withErrorHandling } from "@/lib/api";
@@ -27,8 +27,8 @@ export const GET = withErrorHandling(async (req: NextRequest) => {
   };
 
   try {
-    await db.$queryRaw`SELECT 1`;
-    checks.database = true;
+    const { error } = await supabase.from("mangas").select("id").limit(1);
+    checks.database = !error;
   } catch {
     checks.database = false;
   }
@@ -45,10 +45,12 @@ export const GET = withErrorHandling(async (req: NextRequest) => {
   // Bang app_config chi ton tai tren PostgreSQL — SQLite dev se skip.
   if (env.admin.userId && isValidUuid(env.admin.userId)) {
     try {
-      const rows: Array<{ value: string | null }> = await db.$queryRaw`
-        SELECT value FROM app_config WHERE key = 'admin_user_id' LIMIT 1
-      `;
-      const pinned = rows[0]?.value ?? null;
+      const { data: rows } = await supabase
+        .from("app_config")
+        .select("value")
+        .eq("key", "admin_user_id")
+        .limit(1);
+      const pinned = (rows?.[0] as any)?.value ?? null;
       checks.adminIdentityPinned =
         pinned !== null && pinned.toLowerCase() === env.admin.userId ? "ok" : "mismatch";
       if (checks.adminIdentityPinned === "mismatch") {

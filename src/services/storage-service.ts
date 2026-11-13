@@ -1,33 +1,18 @@
 // =============================================================
 // Storage service: thong ke dung luong, audit orphan (R2 vs DB),
 // cleanup file mo coi / PENDING qua han, va safe-delete (toan ven
-// du lieu DB <-> R2).
-//
-// NGUYEN TAC TOAN VEN DU LIEU:
-// - safeDeleteObjects(): chi go bo metadata khi R2 xac nhan object
-//   DA XOA hoac KHONG TON TAI (S3 delete idempotent). Object xoa
-//   that bai -> giu row (DELETE_PENDING) de retry — khong bao gio
-//   mat tham chieu den object that tren R2.
+// du lieu DB <-> R2). Supabase REST (HTTP).
 // =============================================================
 
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { deleteObjects, listObjectsPage } from "@/lib/r2";
 import type { StorageStatsDto, OrphanAuditItemDto } from "@/types";
 
 export interface SafeDeleteResult {
-  /** Key da duoc xac nhan xoa khoi R2 (an toan go bo metadata). */
   removed: string[];
-  /** Key chua xoa duoc — GIU metadata de retry. */
   pending: Array<{ key: string; reason: string }>;
 }
 
-/**
- * Xoa object tren R2 va CHI tra ve danh sach key da duoc xac nhan xoa.
- * - Loi mang toan phan -> tat ca key nam trong pending (giu metadata).
- * - Loi theo tung key -> key do nam trong pending.
- * - Key khong ton tai tren R2 van duoc bao "Deleted" (S3 idempotent)
- *   -> coi nhu removed (metadata rac, go bo an toan).
- */
 export async function safeDeleteObjects(keys: string[]): Promise<SafeDeleteResult> {
   if (keys.length === 0) return { removed: [], pending: [] };
   let res: Awaited<ReturnType<typeof deleteObjects>>;
@@ -43,97 +28,108 @@ export async function safeDeleteObjects(keys: string[]): Promise<SafeDeleteResul
   );
   const pending: SafeDeleteResult["pending"] = [];
   for (const key of keys) {
-    if (removed.has(key)) continue; // da xac nhan xoa
+    if (removed.has(key)) continue;
     if (errorKeys.has(key)) {
       pending.push({ key, reason: "r2_delete_error" });
       continue;
     }
-    // Khong trong Deleted cung khong co loi rieng -> coi nhu pending (an toan)
     pending.push({ key, reason: "unconfirmed" });
   }
   return { removed: [...removed], pending };
 }
 
-/** Go bo metadata cho cac key da xac nhan xoa (idempotent). */
 export async function removeMetadataIfDeleted(keys: string[]): Promise<number> {
   if (keys.length === 0) return 0;
-  const res = await db.storageObject.deleteMany({
-    where: { objectKey: { in: keys } },
-  });
-  return res.count;
+  const { count } = await supabase
+    .from("storage_objects")
+    .delete({ count: "exact" })
+    .in("object_key", keys);
+  return count ?? 0;
 }
 
 export async function getStorageStats(): Promise<StorageStatsDto> {
-  const [totals, perMangaAgg, largest, pendingCount, deletePendingCount, mangaCount, chapterCount, pageCount] =
+  const [confirmedRes, pendingCount, deletePendingCount, mangaCount, chapterCount, pageCount] =
     await Promise.all([
-      db.storageObject.aggregate({
-        where: { status: "CONFIRMED" },
-        _sum: { fileSize: true },
-        _count: { _all: true },
-      }),
-      db.storageObject.groupBy({
-        by: ["mangaId"],
-        where: { status: "CONFIRMED", mangaId: { not: null } },
-        _sum: { fileSize: true },
-        _count: { _all: true },
-      }),
-      db.storageObject.findMany({
-        where: { status: "CONFIRMED" },
-        orderBy: { fileSize: "desc" },
-        take: 10,
-        include: {
-          manga: { select: { title: true } },
-          chapter: { select: { chapterNumber: true } },
-        },
-      }),
-      db.storageObject.count({ where: { status: "PENDING" } }),
-      db.storageObject.count({ where: { status: "DELETE_PENDING" } }),
-      db.manga.count(),
-      db.chapter.count(),
-      db.page.count(),
+      supabase.from("storage_objects").select("file_size, manga_id").eq("status", "CONFIRMED"),
+      supabase.from("storage_objects").select("*", { count: "exact", head: true }).eq("status", "PENDING"),
+      supabase.from("storage_objects").select("*", { count: "exact", head: true }).eq("status", "DELETE_PENDING"),
+      supabase.from("mangas").select("*", { count: "exact", head: true }),
+      supabase.from("chapters").select("*", { count: "exact", head: true }),
+      supabase.from("pages").select("*", { count: "exact", head: true }),
     ]);
 
-  const mangaIds = perMangaAgg.map((g) => g.mangaId) as string[];
-  const mangas = await db.manga.findMany({
-    where: { id: { in: mangaIds } },
-    select: { id: true, title: true, _count: { select: { chapters: true } } },
-  });
-  const mangaMap = new Map(mangas.map((m) => [m.id, m]));
+  const confirmed = confirmedRes.data ?? [];
+  const totalBytes = confirmed.reduce((sum: number, r: any) => sum + Number(r.file_size ?? 0), 0);
+  const totalFiles = confirmed.length;
 
-  const perManga = perMangaAgg
-    .map((g) => {
-      const m = mangaMap.get(g.mangaId as string);
-      return m
-        ? {
-            mangaId: m.id,
-            title: m.title,
-            fileCount: g._count._all,
-            sizeBytes: Number(g._sum.fileSize ?? 0),
-            chapterCount: m._count.chapters,
-          }
-        : null;
+  // Per-manga aggregation
+  const perMangaMap = new Map<string, { fileCount: number; sizeBytes: number }>();
+  for (const r of confirmed) {
+    if (!r.manga_id) continue;
+    const agg = perMangaMap.get(r.manga_id) ?? { fileCount: 0, sizeBytes: 0 };
+    agg.fileCount++;
+    agg.sizeBytes += Number(r.file_size ?? 0);
+    perMangaMap.set(r.manga_id, agg);
+  }
+
+  const mangaIds = [...perMangaMap.keys()];
+  const { data: mangas } = mangaIds.length > 0
+    ? await supabase.from("mangas").select("id, title").in("id", mangaIds)
+    : { data: [] };
+
+  const mangaMap = new Map((mangas ?? []).map((m: any) => [m.id, m]));
+  const { data: chapterCounts } = mangaIds.length > 0
+    ? await supabase.from("chapters").select("manga_id").in("manga_id", mangaIds)
+    : { data: [] };
+
+  const chapterCountMap = new Map<string, number>();
+  for (const c of chapterCounts ?? []) {
+    chapterCountMap.set(c.manga_id, (chapterCountMap.get(c.manga_id) ?? 0) + 1);
+  }
+
+  const perManga = [...perMangaMap.entries()]
+    .map(([mangaId, agg]) => {
+      const m = mangaMap.get(mangaId);
+      if (!m) return null;
+      return {
+        mangaId: m.id,
+        title: m.title,
+        fileCount: agg.fileCount,
+        sizeBytes: agg.sizeBytes,
+        chapterCount: chapterCountMap.get(mangaId) ?? 0,
+      };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null)
     .sort((a, b) => b.sizeBytes - a.sizeBytes);
 
+  // Largest files
+  const { data: largest } = await supabase
+    .from("storage_objects")
+    .select("object_key, file_name, file_size, manga_id, chapter_id, created_at, manga:mangas(title), chapter:chapters(chapter_number)")
+    .eq("status", "CONFIRMED")
+    .order("file_size", { ascending: false })
+    .limit(10);
+
+  const largestFiles = (largest ?? []).map((f: any) => ({
+    objectKey: f.object_key,
+    fileName: f.file_name,
+    fileSize: Number(f.file_size),
+    mangaTitle: f.manga?.title ?? null,
+    chapterNumber: f.chapter?.chapter_number ?? null,
+    createdAt: f.created_at,
+  }));
+
   return {
-    totalBytes: Number(totals._sum.fileSize ?? 0),
-    totalFiles: totals._count._all,
-    quotaBytes: 100 * 1024 * 1024 * 1024, // se duoc override boi route theo env
-    mangaCount,
-    chapterCount,
-    pageCount,
+    totalBytes,
+    totalFiles,
+    quotaBytes: 100 * 1024 * 1024 * 1024,
+    mangaCount: mangaCount.count ?? 0,
+    chapterCount: chapterCount.count ?? 0,
+    pageCount: pageCount.count ?? 0,
     perManga,
-    largestFiles: largest.map((f) => ({
-      objectKey: f.objectKey,
-      fileName: f.fileName,
-      fileSize: Number(f.fileSize),
-      mangaTitle: f.manga?.title ?? null,
-      chapterNumber: f.chapter?.chapterNumber ?? null,
-      createdAt: f.createdAt.toISOString(),
-    })),
-    pendingObjects: pendingCount,
-    deletePendingObjects: deletePendingCount,
+    largestFiles,
+    pendingObjects: pendingCount.count ?? 0,
+    deletePendingObjects: deletePendingCount.count ?? 0,
   };
 }
 
@@ -146,16 +142,6 @@ export interface AuditPageResult {
 
 const AUDIT_PAGE_SIZE = 1000;
 
-/**
- * Audit 1 trang listing R2: phat hien object tren R2 ma DB khong
- * con tham chieu (orphan). Client goi lap lai den khi truncated=false.
- *
- * Phan loai orphan:
- * - Khong co StorageObject row -> hoan toan mo coi
- * - Row PENDING qua han (mac dinh 24h) -> upload bi gian doan
- * - Row CONFIRMED nhung khong duoc page/cover tham chieu -> finalize that bai
- * - Row DELETE_PENDING khong con tham chieu -> xoa R2 that bai truoc do (retry)
- */
 export async function auditStoragePage(opts: {
   continuationToken?: string;
   maxAgeHours?: number;
@@ -171,23 +157,21 @@ export async function auditStoragePage(opts: {
     return { items: [], scanned: 0, truncated: page.truncated, nextToken: page.continuationToken };
   }
 
-  const [pageRefs, coverRefs, storageRows] = await Promise.all([
-    db.page.findMany({ where: { objectKey: { in: page.keys } }, select: { objectKey: true } }),
-    db.manga.findMany({
-      where: { coverImageKey: { in: page.keys } },
-      select: { coverImageKey: true },
-    }),
-    db.storageObject.findMany({
-      where: { objectKey: { in: page.keys } },
-      select: { objectKey: true, status: true, createdAt: true },
-    }),
+  const [pageRefsRes, coverRefsRes, storageRowsRes] = await Promise.all([
+    supabase.from("pages").select("object_key").in("object_key", page.keys),
+    supabase.from("mangas").select("cover_image_key").in("cover_image_key", page.keys),
+    supabase.from("storage_objects").select("object_key, status, created_at").in("object_key", page.keys),
   ]);
 
+  const pageRefs = pageRefsRes.data ?? [];
+  const coverRefs = coverRefsRes.data ?? [];
+  const storageRows = storageRowsRes.data ?? [];
+
   const liveKeys = new Set<string>([
-    ...pageRefs.map((p) => p.objectKey),
-    ...coverRefs.map((m) => m.coverImageKey ?? ""),
+    ...pageRefs.map((p: any) => p.object_key),
+    ...coverRefs.map((m: any) => m.cover_image_key ?? ""),
   ]);
-  const rowMap = new Map(storageRows.map((s) => [s.objectKey, s]));
+  const rowMap = new Map(storageRows.map((s: any) => [s.object_key, s]));
 
   const orphans: OrphanAuditItemDto[] = [];
   page.keys.forEach((key, i) => {
@@ -197,19 +181,13 @@ export async function auditStoragePage(opts: {
       orphans.push({ objectKey: key, size: page.sizes[i] });
       return;
     }
-    if (row.status === "PENDING" && row.createdAt < staleCutoff) {
+    if (row.status === "PENDING" && new Date(row.created_at) < staleCutoff) {
       orphans.push({ objectKey: key, size: page.sizes[i] });
       return;
     }
-    if (row.status === "CONFIRMED") {
-      // confirmed nhung khong duoc tham chieu -> orphan
+    if (row.status === "CONFIRMED" || row.status === "DELETE_PENDING") {
       orphans.push({ objectKey: key, size: page.sizes[i] });
     }
-    if (row.status === "DELETE_PENDING") {
-      // xoa R2 that bai truoc do -> retry qua cleanup
-      orphans.push({ objectKey: key, size: page.sizes[i] });
-    }
-    // PENDING moi (dang upload) -> khong phai orphan
   });
 
   return {
@@ -220,27 +198,23 @@ export async function auditStoragePage(opts: {
   };
 }
 
-/**
- * Cleanup PENDING qua han (upload bi gian doan).
- * TOAN VEN: chi xoa row khi R2 xac nhan object da xoa. Xoa that bai
- * -> row giu nguyen, lan cleanup sau retry.
- */
 export async function cleanupPendingObjects(opts: {
   maxAgeHours: number;
   dryRun: boolean;
 }): Promise<{ candidates: number; deleted: number; keys: string[]; retryNeeded: number }> {
-  const cutoff = new Date(Date.now() - opts.maxAgeHours * 3600 * 1000);
-  const stale = await db.storageObject.findMany({
-    where: { status: "PENDING", createdAt: { lt: cutoff } },
-    select: { objectKey: true },
-  });
-  const keys = stale.map((s) => s.objectKey);
+  const cutoff = new Date(Date.now() - opts.maxAgeHours * 3600 * 1000).toISOString();
+  const { data: stale } = await supabase
+    .from("storage_objects")
+    .select("object_key")
+    .eq("status", "PENDING")
+    .lt("created_at", cutoff);
+
+  const keys = (stale ?? []).map((s: any) => s.object_key);
   if (opts.dryRun || keys.length === 0) {
     return { candidates: keys.length, deleted: 0, keys, retryNeeded: 0 };
   }
 
   const result = await safeDeleteObjects(keys);
-  // Chi go bo metadata cho key da xac nhan xoa tren R2
   const removedCount = await removeMetadataIfDeleted(result.removed);
 
   return {
@@ -251,18 +225,15 @@ export async function cleanupPendingObjects(opts: {
   };
 }
 
-/**
- * Retry cac object DELETE_PENDING (xoa R2 that bai truoc do — do deleteChapter/
- * deleteManga/clearPages de lai). Idempotent: chay nhieu lan an toan.
- */
 export async function retryFailedDeletions(opts: {
   dryRun: boolean;
 }): Promise<{ candidates: number; deleted: number; retryNeeded: number; keys: string[] }> {
-  const rows = await db.storageObject.findMany({
-    where: { status: "DELETE_PENDING" },
-    select: { objectKey: true },
-  });
-  const keys = rows.map((r) => r.objectKey);
+  const { data: rows } = await supabase
+    .from("storage_objects")
+    .select("object_key")
+    .eq("status", "DELETE_PENDING");
+
+  const keys = (rows ?? []).map((r: any) => r.object_key);
   if (opts.dryRun || keys.length === 0) {
     return { candidates: keys.length, deleted: 0, retryNeeded: 0, keys };
   }
@@ -278,7 +249,6 @@ export async function retryFailedDeletions(opts: {
   };
 }
 
-/** Xoa danh sach object cu the (ket qua audit) — co kiem tra khong con tham chieu */
 export async function cleanupOrphanKeys(keys: string[], dryRun: boolean): Promise<{
   candidates: number;
   deleted: number;
@@ -288,13 +258,16 @@ export async function cleanupOrphanKeys(keys: string[], dryRun: boolean): Promis
 }> {
   if (keys.length === 0) return { candidates: 0, deleted: 0, skippedReferenced: [], retryNeeded: 0, errors: [] };
 
-  const [pageRefs, coverRefs] = await Promise.all([
-    db.page.findMany({ where: { objectKey: { in: keys } }, select: { objectKey: true } }),
-    db.manga.findMany({ where: { coverImageKey: { in: keys } }, select: { coverImageKey: true } }),
+  const [pageRefsRes, coverRefsRes] = await Promise.all([
+    supabase.from("pages").select("object_key").in("object_key", keys),
+    supabase.from("mangas").select("cover_image_key").in("cover_image_key", keys),
   ]);
+  const pageRefs = pageRefsRes.data ?? [];
+  const coverRefs = coverRefsRes.data ?? [];
+
   const referenced = new Set<string>([
-    ...pageRefs.map((p) => p.objectKey),
-    ...coverRefs.map((m) => m.coverImageKey ?? ""),
+    ...pageRefs.map((p: any) => p.object_key),
+    ...coverRefs.map((m: any) => m.cover_image_key ?? ""),
   ]);
   const safeKeys = keys.filter((k) => !referenced.has(k));
   const skippedReferenced = keys.filter((k) => referenced.has(k));

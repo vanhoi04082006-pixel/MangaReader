@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ok, fail, parseBody, requireAdminMutation, withErrorHandling, ApiError } from "@/lib/api";
 import { presignSchema, MAX_FILE_SIZE } from "@/schemas";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { presignPut, pageObjectKey, coverObjectKey, extFromMime } from "@/lib/r2";
 import { getEnv } from "@/lib/env";
 import { hitRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
@@ -39,18 +39,15 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   }
 
   // Xac thuc moi quan he du lieu
-  const manga = await db.manga.findUnique({ where: { id: input.mangaId }, select: { id: true } });
+  const { data: manga } = await supabase.from("mangas").select("id").eq("id", input.mangaId).maybeSingle();
   if (!manga) return fail("Không tìm thấy truyện.", 404, "not_found");
 
   if (input.kind === "PAGE") {
     if (!input.chapterId) {
       return fail("Thiếu ID chương để upload trang.", 400, "missing_chapter");
     }
-    const chapter = await db.chapter.findUnique({
-      where: { id: input.chapterId },
-      select: { id: true, mangaId: true },
-    });
-    if (!chapter || chapter.mangaId !== input.mangaId) {
+    const { data: chapter } = await supabase.from("chapters").select("id, manga_id").eq("id", input.chapterId).maybeSingle();
+    if (!chapter || chapter.manga_id !== input.mangaId) {
       return fail("Chương không thuộc truyện này.", 404, "not_found");
     }
   }
@@ -58,19 +55,14 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   // ---- Kiem tra storage quota (server-side) ----
   // Tinh: dung luong CONFIRMED + PENDING "con song" (tao < 24h — qua han se bi cleanup)
   const env = getEnv();
-  const activePendingSince = new Date(Date.now() - 24 * 3600 * 1000);
-  const [confirmedAgg, pendingAgg] = await Promise.all([
-    db.storageObject.aggregate({
-      where: { status: "CONFIRMED" },
-      _sum: { fileSize: true },
-    }),
-    db.storageObject.aggregate({
-      where: { status: "PENDING", createdAt: { gte: activePendingSince } },
-      _sum: { fileSize: true },
-    }),
+  const activePendingSince = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const [confirmedRes, pendingRes] = await Promise.all([
+    supabase.from("storage_objects").select("file_size").eq("status", "CONFIRMED"),
+    supabase.from("storage_objects").select("file_size").eq("status", "PENDING").gte("created_at", activePendingSince),
   ]);
-  const usedBytes =
-    Number(confirmedAgg._sum.fileSize ?? 0) + Number(pendingAgg._sum.fileSize ?? 0);
+  const confirmedBytes = (confirmedRes.data ?? []).reduce((s: number, r: any) => s + Number(r.file_size ?? 0), 0);
+  const pendingBytes = (pendingRes.data ?? []).reduce((s: number, r: any) => s + Number(r.file_size ?? 0), 0);
+  const usedBytes = confirmedBytes + pendingBytes;
   if (usedBytes + input.fileSize > env.storageQuotaBytes) {
     return fail(
       `Vượt hạn mức lưu trữ (${Math.round(env.storageQuotaBytes / 1024 / 1024 / 1024)}GB). ` +
@@ -86,18 +78,21 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
       : coverObjectKey(input.mangaId, ext);
 
   // Track object truoc khi cap URL (neu upload bi gian doan -> audit phat hien)
-  const storageObject = await db.storageObject.create({
-    data: {
-      objectKey,
+  const { data: storageObject, error: soErr } = await supabase
+    .from("storage_objects")
+    .insert({
+      object_key: objectKey,
       kind: input.kind,
       status: "PENDING",
-      fileName: input.fileName,
-      fileSize: input.fileSize,
-      mimeType: input.mimeType,
-      mangaId: input.mangaId,
-      chapterId: input.kind === "PAGE" ? input.chapterId ?? null : null,
-    },
-  });
+      file_name: input.fileName,
+      file_size: input.fileSize,
+      mime_type: input.mimeType,
+      manga_id: input.mangaId,
+      chapter_id: input.kind === "PAGE" ? input.chapterId ?? null : null,
+    })
+    .select()
+    .single();
+  if (soErr) throw new ApiError(`Tạo storage object thất bại: ${soErr.message}`, 500);
 
   // KY kem Content-Length: R2 tu choi PUT neu kich thuoc thuc te khac khai bao.
   // (neu R2 khong ap dung, finalize se HeadObject verify — lop thu hai)

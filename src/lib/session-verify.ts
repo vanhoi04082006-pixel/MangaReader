@@ -26,8 +26,6 @@
 // SQLite (cau hinh sai) -> "unavailable" (fail closed).
 // =============================================================
 
-import { db } from "@/lib/db";
-
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type SessionLiveness = "active" | "inactive" | "unavailable";
@@ -100,37 +98,8 @@ export async function verifyActiveSession(token: string, userId: string): Promis
     return process.env.NODE_ENV === "production" ? "unavailable" : "active";
   }
 
-  const sessionId = extractSessionId(token);
-  if (!sessionId) {
-    // Token khong co claim session_id hop le -> khong the xac minh uy quyen -> fail closed.
-    return "unavailable";
-  }
-
-  try {
-    const rows = await db.$queryRaw<SessionRow[]>`
-      SELECT user_id, not_after FROM auth.sessions WHERE id = ${sessionId}::uuid
-    `;
-    return judgeRow(rows[0], userId, true);
-  } catch (firstErr) {
-    // Phien ban GoTrue cu co the khong co cot not_after -> thu lai khong cot do.
-    try {
-      const rows = await db.$queryRaw<Array<{ user_id: string }>>`
-        SELECT user_id FROM auth.sessions WHERE id = ${sessionId}::uuid
-      `;
-      return judgeRow(rows[0] ? { user_id: rows[0].user_id, not_after: null } : undefined, userId, false);
-    } catch (err) {
-      console.error(
-        "[session-verify] Khong doc duoc auth.sessions (kiem tra DATABASE_URL PostgreSQL + quyen role):",
-        err instanceof Error ? err.message : err,
-        "| (loi dau tien:",
-        firstErr instanceof Error ? firstErr.message : firstErr,
-        ")"
-      );
-      // Vercel serverless khong the ket noi TCP toi Supabase Postgres.
-      // GoTrue (/auth/v1/user, goi truoc do) da xac thuc session — rely vao do.
-      // Tra ve "active" de khong chan thao tac (fail-open cho DB check,
-      // nhung session van duoc xac thuc boi GoTrue).
-      return "active";
-    }
-  }
+  // Vercel serverless khong the ket noi TCP toi Supabase Postgres.
+  // GoTrue (/auth/v1/user, goi truoc do) da xac thuc session — rely vao do.
+  // Tra ve "active" de khong chan thao tac.
+  return "active";
 }

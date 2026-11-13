@@ -1,9 +1,9 @@
 // =============================================================
 // Manga service: CRUD, tim kiem/loc/sap xep/phan trang,
-// yeu thich, bia, xoa cascade (DB + R2 dong bo)
+// yeu thich, bia, xoa cascade (DB + R2 dong bo) — Supabase REST
 // =============================================================
 
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { ApiError } from "@/lib/api";
 import { deleteObjects } from "@/lib/r2";
 import { ensureGenres } from "@/services/genre-service";
@@ -13,18 +13,8 @@ import type { MangaCreateInput, MangaUpdateInput, MangaStatus } from "@/schemas"
 import type { MangaSummaryDto, MangaDetailDto, Paginated } from "@/types";
 import { naturalCompare } from "@/utils/natural-sort";
 
-/**
- * Filter contains tuong thich SQLite/PostgreSQL:
- * - SQLite: LIKE mac dinh case-insensitive (ASCII) -> contains thuan
- * - PostgreSQL: LIKE case-SENSITIVE -> them mode: "insensitive"
- * (cast an toan: key `mode` chi ton tai tren client PG)
- */
-function textContains(value: string): { contains: string } {
-  const isPostgres = (process.env.DATABASE_URL ?? "").startsWith("postgres");
-  if (isPostgres) {
-    return { contains: value, mode: "insensitive" } as unknown as { contains: string };
-  }
-  return { contains: value };
+function textContains(value: string): string {
+  return value; // PostgREST: use ilike for case-insensitive
 }
 
 interface ListParams {
@@ -39,60 +29,59 @@ interface ListParams {
   pageSize: number;
 }
 
-/** Assemble thong tin summary cho tap id cho truoc (counts + progress + favorite) */
 export async function getMangaSummaries(ids: string[], userId: string): Promise<MangaSummaryDto[]> {
   if (ids.length === 0) return [];
-  const [mangas, chapterAgg] = await Promise.all([
-    db.manga.findMany({
-      where: { id: { in: ids } },
-      include: {
-        genres: { include: { genre: true } },
-        favorites: { where: { userId }, select: { createdAt: true } },
-        readingProgress: {
-          where: { userId },
-          take: 1,
-          include: { chapter: { select: { id: true, chapterNumber: true, pageCount: true } } },
-        },
-      },
-    }),
-    db.chapter.groupBy({
-      by: ["mangaId"],
-      where: { mangaId: { in: ids } },
-      _count: { _all: true },
-      _sum: { pageCount: true },
-    }),
-  ]);
+  const { data: mangas } = await supabase
+    .from("mangas")
+    .select("*, genres:manga_genres(genre:genres(name)), favorites:favorites(created_at), reading_progress:reading_progress(page_number, updated_at, chapter:chapters(id, chapter_number, page_count))")
+    .in("id", ids);
 
-  const chapterMap = new Map(chapterAgg.map((c) => [c.mangaId, c]));
+  // chapter counts
+  const { data: chapterAgg } = await supabase
+    .from("chapters")
+    .select("manga_id")
+    .in("manga_id", ids);
 
-  // giu thu tu theo ids dau vao
-  const byId = new Map(mangas.map((m) => [m.id, m]));
+  const chapterMap = new Map<string, { count: number; pages: number }>();
+  // Need page counts per chapter
+  const { data: chapters } = await supabase
+    .from("chapters")
+    .select("manga_id, page_count")
+    .in("manga_id", ids);
+  for (const c of chapters ?? []) {
+    const agg = chapterMap.get(c.manga_id) ?? { count: 0, pages: 0 };
+    agg.count++;
+    agg.pages += c.page_count ?? 0;
+    chapterMap.set(c.manga_id, agg);
+  }
+
+  const byId = new Map((mangas ?? []).map((m: any) => [m.id, m]));
   return ids
     .map((id) => byId.get(id))
-    .filter((m): m is NonNullable<typeof m> => Boolean(m))
-    .map((m) => {
-      const agg = chapterMap.get(m.id);
-      const progress = m.readingProgress[0];
+    .filter((m): m is any => Boolean(m))
+    .map((m: any) => {
+      const agg = chapterMap.get(m.id) ?? { count: 0, pages: 0 };
+      const progress = (m.reading_progress ?? [])[0];
       return {
         id: m.id,
         title: m.title,
         author: m.author,
         status: m.status as MangaStatus,
-        coverImageKey: m.coverImageKey,
-        genres: m.genres.map((g) => g.genre.name).sort((a, b) => a.localeCompare(b)),
-        chapterCount: agg?._count._all ?? 0,
-        pageCount: agg?._sum.pageCount ?? 0,
-        isFavorite: m.favorites.length > 0,
-        createdAt: m.createdAt.toISOString(),
-        updatedAt: m.updatedAt.toISOString(),
-        lastReadAt: progress ? progress.updatedAt.toISOString() : null,
+        coverImageKey: m.cover_image_key,
+        genres: (m.genres ?? []).map((g: any) => g.genre?.name).filter(Boolean).sort((a: string, b: string) => a.localeCompare(b)),
+        chapterCount: agg.count,
+        pageCount: agg.pages,
+        isFavorite: (m.favorites ?? []).length > 0,
+        createdAt: m.created_at,
+        updatedAt: m.updated_at,
+        lastReadAt: progress ? progress.updated_at : null,
         progress: progress
           ? {
-              chapterId: progress.chapter.id,
-              chapterNumber: progress.chapter.chapterNumber,
-              pageNumber: progress.pageNumber,
-              pageCount: progress.chapter.pageCount,
-              updatedAt: progress.updatedAt.toISOString(),
+              chapterId: progress.chapter?.id,
+              chapterNumber: progress.chapter?.chapter_number,
+              pageNumber: progress.page_number,
+              pageCount: progress.chapter?.page_count,
+              updatedAt: progress.updated_at,
             }
           : null,
       } satisfies MangaSummaryDto;
@@ -100,67 +89,84 @@ export async function getMangaSummaries(ids: string[], userId: string): Promise<
 }
 
 export async function listMangas(params: ListParams): Promise<Paginated<MangaSummaryDto>> {
-  const where = {
-    ...(params.status ? { status: params.status } : {}),
-    ...(params.favorites ? { favorites: { some: { userId: params.userId } } } : {}),
-    ...(params.genre ? { genres: { some: { genre: { name: params.genre } } } } : {}),
-    ...(params.search
-      ? {
-          OR: [
-            { title: textContains(params.search) },
-            { alternativeTitles: textContains(params.search) },
-            { author: textContains(params.search) },
-          ],
-        }
-      : {}),
-  };
+  // Helper to apply common filters to a query builder
+  function applyFilters(q: any): any {
+    if (params.status) q = q.eq("status", params.status);
+    if (params.search) q = q.or(`title.ilike.%${params.search}%,alternative_titles.ilike.%${params.search}%,author.ilike.%${params.search}%`);
+    return q;
+  }
 
-  const total = await db.manga.count({ where });
+  // Favorites filter ids
+  let favIds: string[] | null = null;
+  if (params.favorites) {
+    const { data: favs } = await supabase.from("favorites").select("manga_id").eq("user_id", params.userId);
+    favIds = (favs ?? []).map((f: any) => f.manga_id);
+    if (favIds.length === 0) {
+      return { items: [], total: 0, page: params.page, pageSize: params.pageSize, totalPages: 1 };
+    }
+  }
+
+  // Genre filter ids
+  let genreIds: string[] | null = null;
+  if (params.genre) {
+    const { data: genre } = await supabase.from("genres").select("id").eq("name", params.genre).maybeSingle();
+    if (genre) {
+      const { data: mg } = await supabase.from("manga_genres").select("manga_id").eq("genre_id", genre.id);
+      genreIds = (mg ?? []).map((m: any) => m.manga_id);
+      if (genreIds.length === 0) {
+        return { items: [], total: 0, page: params.page, pageSize: params.pageSize, totalPages: 1 };
+      }
+    }
+  }
 
   let pageIds: string[];
+  let total = 0;
 
   if (params.sort === "lastRead") {
-    // Sap xep theo lan doc gan nhat: lay ids + progress map, sort trong JS
-    // (phu hop quy mo thu vien ca nhan; never-read luon xep cuoi)
-    const [allMangas, progressRows] = await Promise.all([
-      db.manga.findMany({ where, select: { id: true, title: true } }),
-      db.readingProgress.findMany({
-        where: { userId: params.userId, mangaId: { in: (await db.manga.findMany({ where, select: { id: true } })).map((m) => m.id) } },
-        select: { mangaId: true, updatedAt: true },
-      }),
-    ]);
-    const lastReadMap = new Map(progressRows.map((p) => [p.mangaId, p.updatedAt.getTime()]));
+    let q = supabase.from("mangas").select("id, title");
+    q = applyFilters(q);
+    if (favIds) q = q.in("id", favIds);
+    if (genreIds) q = q.in("id", genreIds);
+    const { data: allRows } = await q;
+    const allIds = (allRows ?? []).map((m: any) => m.id);
+    total = allIds.length;
+
+    const { data: progressRows } = allIds.length > 0
+      ? await supabase.from("reading_progress").select("manga_id, updated_at").eq("user_id", params.userId).in("manga_id", allIds)
+      : { data: [] };
+
+    const lastReadMap = new Map((progressRows ?? []).map((p: any) => [p.manga_id, new Date(p.updated_at).getTime()]));
     const dir = params.order === "asc" ? 1 : -1;
-    allMangas.sort((a, b) => {
+    const sorted = [...(allRows ?? [])].sort((a: any, b: any) => {
       const ta = lastReadMap.get(a.id);
       const tb = lastReadMap.get(b.id);
       if (ta === undefined && tb === undefined) return a.title.localeCompare(b.title);
-      if (ta === undefined) return 1; // chua doc -> cuoi
+      if (ta === undefined) return 1;
       if (tb === undefined) return -1;
       if (ta !== tb) return (ta - tb) * dir;
       return a.title.localeCompare(b.title);
     });
-    pageIds = allMangas
-      .slice((params.page - 1) * params.pageSize, params.page * params.pageSize)
-      .map((m) => m.id);
+    pageIds = sorted.slice((params.page - 1) * params.pageSize, params.page * params.pageSize).map((m: any) => m.id);
   } else {
-    const orderBy =
-      params.sort === "title"
-        ? { title: params.order }
-        : params.sort === "updatedAt"
-          ? { updatedAt: params.order }
-          : { createdAt: params.order };
-    const rows = await db.manga.findMany({
-      where,
-      orderBy,
-      skip: (params.page - 1) * params.pageSize,
-      take: params.pageSize,
-      select: { id: true },
-    });
-    pageIds = rows.map((r) => r.id);
+    const sortCol = params.sort === "title" ? "title" : params.sort === "updatedAt" ? "updated_at" : "created_at";
+    let q = supabase.from("mangas").select("id").order(sortCol, { ascending: params.order === "asc" });
+    q = applyFilters(q);
+    if (favIds) q = q.in("id", favIds);
+    if (genreIds) q = q.in("id", genreIds);
+    q = q.range((params.page - 1) * params.pageSize, params.page * params.pageSize - 1);
+    const { data: rows } = await q;
+    pageIds = (rows ?? []).map((r: any) => r.id);
+
+    // Count
+    let countQ = supabase.from("mangas").select("*", { count: "exact", head: true });
+    countQ = applyFilters(countQ);
+    if (favIds) countQ = countQ.in("id", favIds);
+    if (genreIds) countQ = countQ.in("id", genreIds);
+    const { count } = await countQ;
+    total = count ?? 0;
   }
 
-  const items = await getMangaSummaries(pageIds, params.userId);
+  const items = await getMangaSummaries(pageIds ?? [], params.userId);
   return {
     items,
     total,
@@ -173,119 +179,113 @@ export async function listMangas(params: ListParams): Promise<Paginated<MangaSum
 export async function getMangaDetail(mangaId: string, userId: string): Promise<MangaDetailDto | null> {
   const summaries = await getMangaSummaries([mangaId], userId);
   if (summaries.length === 0) return null;
-  const manga = await db.manga.findUnique({
-    where: { id: mangaId },
-    select: {
-      alternativeTitles: true,
-      description: true,
-      artist: true,
-      publicationYear: true,
-    },
-  });
+  const { data: manga } = await supabase
+    .from("mangas")
+    .select("alternative_titles, description, artist, publication_year")
+    .eq("id", mangaId)
+    .maybeSingle();
   if (!manga) return null;
-  const sizeAgg = await db.storageObject.aggregate({
-    where: { mangaId, status: "CONFIRMED" },
-    _sum: { fileSize: true },
-  });
+  const { data: storageAgg } = await supabase
+    .from("storage_objects")
+    .select("file_size")
+    .eq("manga_id", mangaId)
+    .eq("status", "CONFIRMED");
+  const sizeBytes = (storageAgg ?? []).reduce((sum: number, r: any) => sum + Number(r.file_size ?? 0), 0);
   return {
     ...summaries[0],
-    alternativeTitles: manga.alternativeTitles,
+    alternativeTitles: manga.alternative_titles,
     description: manga.description,
     artist: manga.artist,
-    publicationYear: manga.publicationYear,
-    sizeBytes: Number(sizeAgg._sum.fileSize ?? 0),
+    publicationYear: manga.publication_year,
+    sizeBytes,
   };
 }
 
 export async function createManga(input: MangaCreateInput) {
   const genreMap = await ensureGenres(input.genres ?? []);
-  const manga = await db.manga.create({
-    data: {
+  const { data: manga, error } = await supabase
+    .from("mangas")
+    .insert({
       title: input.title,
-      alternativeTitles: input.alternativeTitles ?? null,
+      alternative_titles: input.alternativeTitles ?? null,
       description: input.description ?? null,
       author: input.author ?? null,
       artist: input.artist ?? null,
       status: input.status ?? "ONGOING",
-      publicationYear: input.publicationYear ?? null,
-      genres: {
-        create: Array.from(genreMap.values()).map((genreId) => ({ genreId })),
-      },
-    },
-  });
+      publication_year: input.publicationYear ?? null,
+    })
+    .select()
+    .single();
+  if (error) throw new ApiError(`Tạo truyện thất bại: ${error.message}`, 500);
+
+  if (genreMap.size > 0) {
+    const rows = Array.from(genreMap.values()).map((genreId) => ({ manga_id: manga.id, genre_id: genreId }));
+    await supabase.from("manga_genres").insert(rows);
+  }
   return manga;
 }
 
 export async function updateManga(mangaId: string, input: MangaUpdateInput) {
-  const existing = await db.manga.findUnique({ where: { id: mangaId } });
+  const { data: existing } = await supabase.from("mangas").select("id").eq("id", mangaId).maybeSingle();
   if (!existing) throw new ApiError("Không tìm thấy truyện.", 404, "not_found");
 
   const data: Record<string, unknown> = {};
   if (input.title !== undefined) data.title = input.title;
-  if (input.alternativeTitles !== undefined) data.alternativeTitles = input.alternativeTitles ?? null;
+  if (input.alternativeTitles !== undefined) data.alternative_titles = input.alternativeTitles ?? null;
   if (input.description !== undefined) data.description = input.description ?? null;
   if (input.author !== undefined) data.author = input.author ?? null;
   if (input.artist !== undefined) data.artist = input.artist ?? null;
   if (input.status !== undefined) data.status = input.status;
-  if (input.publicationYear !== undefined) data.publicationYear = input.publicationYear ?? null;
+  if (input.publicationYear !== undefined) data.publication_year = input.publicationYear ?? null;
+
+  if (Object.keys(data).length > 0) {
+    await supabase.from("mangas").update(data).eq("id", mangaId);
+  }
 
   if (input.genres !== undefined) {
     const genreMap = await ensureGenres(input.genres ?? []);
-    data.genres = {
-      deleteMany: {},
-      create: Array.from(genreMap.values()).map((genreId) => ({ genreId })),
-    };
+    await supabase.from("manga_genres").delete().eq("manga_id", mangaId);
+    if (genreMap.size > 0) {
+      const rows = Array.from(genreMap.values()).map((genreId) => ({ manga_id: mangaId, genre_id: genreId }));
+      await supabase.from("manga_genres").insert(rows);
+    }
   }
 
-  return db.manga.update({ where: { id: mangaId }, data });
+  const { data: updated } = await supabase.from("mangas").select("*").eq("id", mangaId).single();
+  return updated;
 }
 
-/**
- * Xoa truyen + toan bo chuong/trang + object tren R2.
- * TOAN VEN DU LIEU (idempotent, recoverable):
- * 1) Mark toan bo StorageObject lien quan -> DELETE_PENDING
- * 2) Xoa DB (cascade chapters/pages/progress/history/favorites/genres;
- *    storageObject FK set null -> row van giu objectKey de retry)
- * 3) Xoa R2 (safe delete)
- * 4) Chi go metadata khi R2 xac nhan xoa. That bai -> DELETE_PENDING,
- *    cleanup route retry sau (audit van thay orphan cho toi khi xoa xong).
- */
 export async function deleteManga(mangaId: string) {
-  const manga = await db.manga.findUnique({
-    where: { id: mangaId },
-    include: { chapters: { select: { id: true } } },
-  });
+  const { data: manga } = await supabase
+    .from("mangas")
+    .select("id, cover_image_key, chapters(id)")
+    .eq("id", mangaId)
+    .maybeSingle();
   if (!manga) throw new ApiError("Không tìm thấy truyện.", 404, "not_found");
 
-  // thu thap tat ca object keys lien quan truoc khi cascade
-  const chapterIds = manga.chapters.map((c) => c.id);
-  const pageObjects = await db.page.findMany({
-    where: { chapterId: { in: chapterIds } },
-    select: { objectKey: true },
-  });
-  const storageRows = await db.storageObject.findMany({
-    where: { mangaId },
-    select: { objectKey: true },
-  });
+  const chapterIds = (manga.chapters ?? []).map((c: any) => c.id);
+  const { data: pageObjects } = chapterIds.length > 0
+    ? await supabase.from("pages").select("object_key").in("chapter_id", chapterIds)
+    : { data: [] };
+  const { data: storageRows } = await supabase.from("storage_objects").select("object_key").eq("manga_id", mangaId);
+
   const keys = new Set<string>([
-    ...pageObjects.map((p) => p.objectKey),
-    ...storageRows.map((s) => s.objectKey),
+    ...(pageObjects ?? []).map((p: any) => p.object_key),
+    ...(storageRows ?? []).map((s: any) => s.object_key),
   ]);
-  if (manga.coverImageKey) keys.add(manga.coverImageKey);
+  if (manga.cover_image_key) keys.add(manga.cover_image_key);
   const keyList = Array.from(keys);
 
-  // 1) Mark DELETE_PENDING
   if (keyList.length > 0) {
-    await db.storageObject.updateMany({
-      where: { objectKey: { in: keyList }, status: { in: ["PENDING", "CONFIRMED"] } },
-      data: { status: "DELETE_PENDING" },
-    });
+    await supabase
+      .from("storage_objects")
+      .update({ status: "DELETE_PENDING" })
+      .in("object_key", keyList)
+      .in("status", ["PENDING", "CONFIRMED"]);
   }
 
-  // 2) Xoa DB truoc (cascade chapters/pages/progress/history/favorites/genres)
-  await db.manga.delete({ where: { id: mangaId } });
+  await supabase.from("mangas").delete().eq("id", mangaId);
 
-  // 3) Xoa object tren R2 + 4) chi go metadata khi xac nhan xoa
   let removedCount = 0;
   let retryNeeded = 0;
   if (keyList.length > 0) {
@@ -293,9 +293,7 @@ export async function deleteManga(mangaId: string) {
     removedCount = await removeMetadataIfDeleted(result.removed);
     retryNeeded = result.pending.length;
     if (retryNeeded > 0) {
-      console.warn(
-        `[manga-service] ${retryNeeded} object xoa R2 that bai — giu DELETE_PENDING, cleanup se retry.`
-      );
+      console.warn(`[manga-service] ${retryNeeded} object xoa R2 that bai — giu DELETE_PENDING, cleanup se retry.`);
     }
   }
 
@@ -303,40 +301,40 @@ export async function deleteManga(mangaId: string) {
 }
 
 export async function toggleFavorite(userId: string, mangaId: string) {
-  const manga = await db.manga.findUnique({ where: { id: mangaId }, select: { id: true } });
+  const { data: manga } = await supabase.from("mangas").select("id").eq("id", mangaId).maybeSingle();
   if (!manga) throw new ApiError("Không tìm thấy truyện.", 404, "not_found");
   await ensureProfile({ id: userId, email: "" });
 
-  const existing = await db.favorite.findUnique({
-    where: { userId_mangaId: { userId, mangaId } },
-  });
+  const { data: existing } = await supabase
+    .from("favorites")
+    .select("user_id")
+    .eq("user_id", userId)
+    .eq("manga_id", mangaId)
+    .maybeSingle();
+
   if (existing) {
-    await db.favorite.delete({ where: { userId_mangaId: { userId, mangaId } } });
+    await supabase.from("favorites").delete().eq("user_id", userId).eq("manga_id", mangaId);
     return { favorited: false };
   }
-  await db.favorite.create({ data: { userId, mangaId } });
+  await supabase.from("favorites").insert({ user_id: userId, manga_id: mangaId });
   return { favorited: true };
 }
 
-/** Cap nhat coverImageKey + doi che do bia cu sang object moi (safe delete) */
 export async function setMangaCover(mangaId: string, newKey: string | null) {
-  const manga = await db.manga.findUnique({ where: { id: mangaId }, select: { coverImageKey: true } });
+  const { data: manga } = await supabase.from("mangas").select("cover_image_key").eq("id", mangaId).maybeSingle();
   if (!manga) throw new ApiError("Không tìm thấy truyện.", 404, "not_found");
-  const oldKey = manga.coverImageKey;
+  const oldKey = manga.cover_image_key;
 
-  await db.manga.update({ where: { id: mangaId }, data: { coverImageKey: newKey } });
+  await supabase.from("mangas").update({ cover_image_key: newKey }).eq("id", mangaId);
 
   if (oldKey && oldKey !== newKey) {
-    // kiem tra key cu con duoc tham chieu boi trang nao khong
-    const stillUsed = await db.page.findFirst({ where: { objectKey: oldKey }, select: { id: true } });
+    const { data: stillUsed } = await supabase.from("pages").select("id").eq("object_key", oldKey).limit(1).maybeSingle();
     if (!stillUsed) {
-      // Mark DELETE_PENDING -> safe delete -> chi go metadata khi xac nhan xoa
-      await db.storageObject
-        .updateMany({
-          where: { objectKey: oldKey, status: { in: ["PENDING", "CONFIRMED"] } },
-          data: { status: "DELETE_PENDING" },
-        })
-        .catch(() => undefined);
+      await supabase
+        .from("storage_objects")
+        .update({ status: "DELETE_PENDING" })
+        .eq("object_key", oldKey)
+        .in("status", ["PENDING", "CONFIRMED"]);
       const result = await safeDeleteObjects([oldKey]);
       await removeMetadataIfDeleted(result.removed).catch(() => undefined);
     }
@@ -344,11 +342,12 @@ export async function setMangaCover(mangaId: string, newKey: string | null) {
   return { coverImageKey: newKey };
 }
 
-/** Lay danh sach chuong cua 1 truyen theo thu tu tu nhien (dung cho reader + sap xep) */
 export async function getChapterOrder(mangaId: string): Promise<Array<{ id: string; chapterNumber: string }>> {
-  const chapters = await db.chapter.findMany({
-    where: { mangaId },
-    select: { id: true, chapterNumber: true },
-  });
-  return chapters.sort((a, b) => naturalCompare(a.chapterNumber, b.chapterNumber));
+  const { data: chapters } = await supabase
+    .from("chapters")
+    .select("id, chapter_number")
+    .eq("manga_id", mangaId);
+  return (chapters ?? [])
+    .map((c: any) => ({ id: c.id, chapterNumber: c.chapter_number }))
+    .sort((a, b) => naturalCompare(a.chapterNumber, b.chapterNumber));
 }

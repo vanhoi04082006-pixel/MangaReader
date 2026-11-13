@@ -1,16 +1,10 @@
 // =============================================================
 // Chapter service: CRUD, pages finalize (upload), reader payload,
 // xoa chapter/page dong bo DB + R2 (idempotent, recoverable)
-//
-// TOAN VEN DU LIEU (DB <-> R2):
-// - finalizePages: verify object TON TAI tren R2 (HeadObject) + dung
-//   kich thuoc/mime + thuoc dung manga/chapter TRUOC khi confirm.
-// - deleteChapter/deletePage/clearPages: mark DELETE_PENDING -> xoa DB
-//   -> xoa R2 (safe) -> chi go metadata khi R2 xac nhan xoa. That bai
-//   -> row DELETE_PENDING, cleanup retry sau (khong mat tham chieu).
+// Supabase REST (HTTP).
 // =============================================================
 
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { ApiError } from "@/lib/api";
 import { deleteObjects, presignGet, headObject } from "@/lib/r2";
 import { getChapterOrder } from "@/services/manga-service";
@@ -22,12 +16,16 @@ import { naturalCompare } from "@/utils/natural-sort";
 
 async function chapterSizeMap(chapterIds: string[]): Promise<Map<string, number>> {
   if (chapterIds.length === 0) return new Map();
-  const agg = await db.storageObject.groupBy({
-    by: ["chapterId"],
-    where: { chapterId: { in: chapterIds }, status: "CONFIRMED" },
-    _sum: { fileSize: true },
-  });
-  return new Map(agg.map((a) => [a.chapterId as string, Number(a._sum.fileSize ?? 0)]));
+  const { data } = await supabase
+    .from("storage_objects")
+    .select("chapter_id, file_size")
+    .in("chapter_id", chapterIds)
+    .eq("status", "CONFIRMED");
+  const map = new Map<string, number>();
+  for (const r of data ?? []) {
+    map.set(r.chapter_id, (map.get(r.chapter_id) ?? 0) + Number(r.file_size ?? 0));
+  }
+  return map;
 }
 
 export async function listChapters(
@@ -36,30 +34,32 @@ export async function listChapters(
   page: number,
   pageSize: number
 ): Promise<Paginated<ChapterDto>> {
-  const [total, chapters] = await Promise.all([
-    db.chapter.count({ where: { mangaId } }),
-    db.chapter.findMany({
-      where: { mangaId },
-      orderBy: { createdAt: sort === "asc" ? "asc" : "desc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    }),
-  ]);
-  const sizeMap = await chapterSizeMap(chapters.map((c) => c.id));
+  const { count: total } = await supabase
+    .from("chapters")
+    .select("*", { count: "exact", head: true })
+    .eq("manga_id", mangaId);
 
-  const items: ChapterDto[] = chapters.map((c) => ({
+  const { data: chapters } = await supabase
+    .from("chapters")
+    .select("*")
+    .eq("manga_id", mangaId)
+    .order("created_at", { ascending: sort === "asc" })
+    .range((page - 1) * pageSize, page * pageSize - 1);
+
+  const sizeMap = await chapterSizeMap((chapters ?? []).map((c: any) => c.id));
+
+  const items: ChapterDto[] = (chapters ?? []).map((c: any) => ({
     id: c.id,
-    mangaId: c.mangaId,
-    chapterNumber: c.chapterNumber,
+    mangaId: c.manga_id,
+    chapterNumber: c.chapter_number,
     title: c.title,
     volume: c.volume,
-    pageCount: c.pageCount,
+    pageCount: c.page_count,
     sizeBytes: sizeMap.get(c.id) ?? 0,
-    createdAt: c.createdAt.toISOString(),
-    updatedAt: c.updatedAt.toISOString(),
+    createdAt: c.created_at,
+    updatedAt: c.updated_at,
   }));
 
-  // Sap xep lai theo so chuong thu tu tu nhien
   items.sort((a, b) => {
     const cmp = naturalCompare(a.chapterNumber, b.chapterNumber);
     return sort === "asc" ? cmp : -cmp;
@@ -67,86 +67,92 @@ export async function listChapters(
 
   return {
     items,
-    total,
+    total: total ?? 0,
     page,
     pageSize,
-    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    totalPages: Math.max(1, Math.ceil((total ?? 0) / pageSize)),
   };
 }
 
 export async function createChapter(mangaId: string, input: ChapterCreateInput) {
-  const manga = await db.manga.findUnique({ where: { id: mangaId }, select: { id: true } });
+  const { data: manga } = await supabase.from("mangas").select("id").eq("id", mangaId).maybeSingle();
   if (!manga) throw new ApiError("Không tìm thấy truyện.", 404, "not_found");
-  const duplicate = await db.chapter.findFirst({
-    where: { mangaId, chapterNumber: input.chapterNumber },
-    select: { id: true },
-  });
+
+  const { data: duplicate } = await supabase
+    .from("chapters")
+    .select("id")
+    .eq("manga_id", mangaId)
+    .eq("chapter_number", input.chapterNumber)
+    .maybeSingle();
   if (duplicate) {
     throw new ApiError(`Chương "${input.chapterNumber}" đã tồn tại trong truyện này.`, 409, "chapter_exists");
   }
-  return db.chapter.create({
-    data: {
-      mangaId,
-      chapterNumber: input.chapterNumber,
+
+  const { data, error } = await supabase
+    .from("chapters")
+    .insert({
+      manga_id: mangaId,
+      chapter_number: input.chapterNumber,
       title: input.title ?? null,
       volume: input.volume ?? null,
-    },
-  });
+      page_count: 0,
+    })
+    .select()
+    .single();
+  if (error) throw new ApiError(`Tạo chương thất bại: ${error.message}`, 500);
+  return data;
 }
 
 export async function updateChapter(chapterId: string, input: ChapterUpdateInput) {
-  const chapter = await db.chapter.findUnique({ where: { id: chapterId } });
+  const { data: chapter } = await supabase.from("chapters").select("*").eq("id", chapterId).maybeSingle();
   if (!chapter) throw new ApiError("Không tìm thấy chương.", 404, "not_found");
-  if (
-    input.chapterNumber !== undefined &&
-    input.chapterNumber !== chapter.chapterNumber
-  ) {
-    const duplicate = await db.chapter.findFirst({
-      where: { mangaId: chapter.mangaId, chapterNumber: input.chapterNumber, id: { not: chapterId } },
-      select: { id: true },
-    });
+
+  if (input.chapterNumber !== undefined && input.chapterNumber !== chapter.chapter_number) {
+    const { data: duplicate } = await supabase
+      .from("chapters")
+      .select("id")
+      .eq("manga_id", chapter.manga_id)
+      .eq("chapter_number", input.chapterNumber)
+      .neq("id", chapterId)
+      .maybeSingle();
     if (duplicate) {
       throw new ApiError(`Chương "${input.chapterNumber}" đã tồn tại trong truyện này.`, 409, "chapter_exists");
     }
   }
-  return db.chapter.update({
-    where: { id: chapterId },
-    data: {
-      ...(input.chapterNumber !== undefined ? { chapterNumber: input.chapterNumber } : {}),
-      ...(input.title !== undefined ? { title: input.title ?? null } : {}),
-      ...(input.volume !== undefined ? { volume: input.volume ?? null } : {}),
-    },
-  });
+
+  const updateData: Record<string, unknown> = {};
+  if (input.chapterNumber !== undefined) updateData.chapter_number = input.chapterNumber;
+  if (input.title !== undefined) updateData.title = input.title ?? null;
+  if (input.volume !== undefined) updateData.volume = input.volume ?? null;
+
+  if (Object.keys(updateData).length > 0) {
+    const { data, error } = await supabase.from("chapters").update(updateData).eq("id", chapterId).select().single();
+    if (error) throw new ApiError(`Cập nhật chương thất bại: ${error.message}`, 500);
+    return data;
+  }
+  return chapter;
 }
 
-/**
- * Xoa chapter + pages + objects tren R2 (idempotent, recoverable):
- * 1) Mark StorageObject -> DELETE_PENDING (luu vet truoc khi xoa DB)
- * 2) Xoa DB (cascade pages/progress/history; storageObject FK set null)
- * 3) Xoa tren R2 (safe delete)
- * 4) Chi go metadata khi R2 xac nhan xoa — that bai -> DELETE_PENDING retry
- */
 export async function deleteChapter(chapterId: string) {
-  const chapter = await db.chapter.findUnique({
-    where: { id: chapterId },
-    include: { pages: { select: { objectKey: true } } },
-  });
+  const { data: chapter } = await supabase
+    .from("chapters")
+    .select("id, pages(object_key)")
+    .eq("id", chapterId)
+    .maybeSingle();
   if (!chapter) throw new ApiError("Không tìm thấy chương.", 404, "not_found");
 
-  const keys = chapter.pages.map((p) => p.objectKey);
+  const keys = (chapter.pages ?? []).map((p: any) => p.object_key);
 
-  // 1) Mark DELETE_PENDING (bao gom ca storage object lien quan khac cua chapter)
   if (keys.length > 0) {
-    await db.storageObject.updateMany({
-      where: { objectKey: { in: keys }, status: { in: ["PENDING", "CONFIRMED"] } },
-      data: { status: "DELETE_PENDING" },
-    });
+    await supabase
+      .from("storage_objects")
+      .update({ status: "DELETE_PENDING" })
+      .in("object_key", keys)
+      .in("status", ["PENDING", "CONFIRMED"]);
   }
 
-  // 2) Xoa DB (cascade)
-  await db.chapter.delete({ where: { id: chapterId } });
+  await supabase.from("chapters").delete().eq("id", chapterId);
 
-  // 3) Xoa objects tren R2 + 4) chi go metadata khi xac nhan xoa
   let removedCount = 0;
   let retryNeeded = 0;
   if (keys.length > 0) {
@@ -162,23 +168,24 @@ export async function deleteChapter(chapterId: string) {
 }
 
 export async function listPages(chapterId: string): Promise<PageDto[]> {
-  const pages = await db.page.findMany({
-    where: { chapterId },
-    orderBy: { pageNumber: "asc" },
-  });
-  return pages.map((p) => ({
+  const { data: pages } = await supabase
+    .from("pages")
+    .select("*")
+    .eq("chapter_id", chapterId)
+    .order("page_number", { ascending: true });
+
+  return (pages ?? []).map((p: any) => ({
     id: p.id,
-    pageNumber: p.pageNumber,
-    objectKey: p.objectKey,
-    fileName: p.fileName,
-    mimeType: p.mimeType,
-    fileSize: Number(p.fileSize),
+    pageNumber: p.page_number,
+    objectKey: p.object_key,
+    fileName: p.file_name,
+    mimeType: p.mime_type,
+    fileSize: Number(p.file_size),
     width: p.width,
     height: p.height,
   }));
 }
 
-/** HeadObject 1 key (cho phep 404 = null). Gop loi de bao cao 1 lan. */
 async function verifyObjectsInR2(
   pages: Array<{ objectKey: string; fileSize: number; mimeType: string }>,
   expectedPrefix: string
@@ -196,21 +203,16 @@ async function verifyObjectsInR2(
         continue;
       }
       if (head.contentLength !== p.fileSize) {
-        problems.push(
-          `${p.objectKey}: kích thước trên R2 (${head.contentLength}B) khác khai báo (${p.fileSize}B)`
-        );
+        problems.push(`${p.objectKey}: kích thước trên R2 (${head.contentLength}B) khác khai báo (${p.fileSize}B)`);
         continue;
       }
       if (head.contentLength > MAX_FILE_SIZE) {
         problems.push(`${p.objectKey}: vượt giới hạn ${MAX_FILE_SIZE} byte`);
         continue;
       }
-      // Mime phai khop (chuan hoa image/jpg -> image/jpeg)
       const normalize = (m?: string | null) => (m === "image/jpg" ? "image/jpeg" : m ?? "");
       if (normalize(head.contentType) !== normalize(p.mimeType)) {
-        problems.push(
-          `${p.objectKey}: Content-Type trên R2 (${head.contentType ?? "?"}) khác khai báo (${p.mimeType})`
-        );
+        problems.push(`${p.objectKey}: Content-Type trên R2 (${head.contentType ?? "?"}) khác khai báo (${p.mimeType})`);
       }
       if (!p.objectKey.startsWith(expectedPrefix)) {
         problems.push(`${p.objectKey}: không thuộc namespace ${expectedPrefix}`);
@@ -221,18 +223,8 @@ async function verifyObjectsInR2(
   return problems;
 }
 
-/**
- * Finalize upload: verify toan ven (DB metadata + R2 HeadObject) roi
- * moi ghi nhan pages vao DB (upsert theo so trang), confirm
- * StorageObject, cap nhat pageCount.
- *
- * Retry an toan: neu upload lai trang da co -> object cu thanh orphan -> cleanup.
- */
 export async function finalizePages(input: PagesFinalizeInput) {
-  const chapter = await db.chapter.findUnique({
-    where: { id: input.chapterId },
-    select: { id: true, mangaId: true },
-  });
+  const { data: chapter } = await supabase.from("chapters").select("id, manga_id").eq("id", input.chapterId).maybeSingle();
   if (!chapter) throw new ApiError("Không tìm thấy chương.", 404, "not_found");
 
   const pageNumbers = input.pages.map((p) => p.pageNumber);
@@ -241,14 +233,15 @@ export async function finalizePages(input: PagesFinalizeInput) {
     throw new ApiError("Có số trang bị trùng lặp trong dữ liệu gửi lên.", 400, "duplicate_page");
   }
 
-  const expectedPrefix = `mangas/${chapter.mangaId}/chapters/${chapter.id}/`;
+  const expectedPrefix = `mangas/${chapter.manga_id}/chapters/${chapter.id}/`;
 
-  // ---- B1: Verify metadata dang ky trong DB ----
-  const storageRows = await db.storageObject.findMany({
-    where: { objectKey: { in: input.pages.map((p) => p.objectKey) } },
-    select: { objectKey: true, kind: true, status: true, mangaId: true, chapterId: true, fileSize: true, mimeType: true },
-  });
-  const rowMap = new Map(storageRows.map((r) => [r.objectKey, r]));
+  // B1: Verify metadata
+  const { data: storageRows } = await supabase
+    .from("storage_objects")
+    .select("object_key, kind, status, manga_id, chapter_id, file_size, mime_type")
+    .in("object_key", input.pages.map((p) => p.objectKey));
+
+  const rowMap = new Map((storageRows ?? []).map((r: any) => [r.object_key, r]));
   const problems: string[] = [];
   for (const p of input.pages) {
     const row = rowMap.get(p.objectKey);
@@ -260,7 +253,7 @@ export async function finalizePages(input: PagesFinalizeInput) {
       problems.push(`${p.objectKey}: không phải object PAGE`);
       continue;
     }
-    if (row.mangaId !== chapter.mangaId || row.chapterId !== chapter.id) {
+    if (row.manga_id !== chapter.manga_id || row.chapter_id !== chapter.id) {
       problems.push(`${p.objectKey}: object không thuộc chương/truyện này`);
       continue;
     }
@@ -268,11 +261,11 @@ export async function finalizePages(input: PagesFinalizeInput) {
       problems.push(`${p.objectKey}: object đang chờ xóa`);
       continue;
     }
-    if (Number(row.fileSize) !== p.fileSize) {
-      problems.push(`${p.objectKey}: kích thước đăng ký (${Number(row.fileSize)}B) khác gửi lên (${p.fileSize}B)`);
+    if (Number(row.file_size) !== p.fileSize) {
+      problems.push(`${p.objectKey}: kích thước đăng ký (${Number(row.file_size)}B) khác gửi lên (${p.fileSize}B)`);
     }
-    if (row.mimeType && row.mimeType !== p.mimeType) {
-      problems.push(`${p.objectKey}: mime đăng ký (${row.mimeType}) khác gửi lên (${p.mimeType})`);
+    if (row.mime_type && row.mime_type !== p.mimeType) {
+      problems.push(`${p.objectKey}: mime đăng ký (${row.mime_type}) khác gửi lên (${p.mimeType})`);
     }
     if (!p.objectKey.startsWith(expectedPrefix)) {
       problems.push(`${p.objectKey}: không thuộc namespace ${expectedPrefix}`);
@@ -286,7 +279,7 @@ export async function finalizePages(input: PagesFinalizeInput) {
     );
   }
 
-  // ---- B2: Verify object TON TAI tren R2 (HeadObject) ----
+  // B2: Verify R2
   const r2Problems = await verifyObjectsInR2(
     input.pages.map((p) => ({ objectKey: p.objectKey, fileSize: p.fileSize, mimeType: p.mimeType })),
     expectedPrefix
@@ -299,12 +292,14 @@ export async function finalizePages(input: PagesFinalizeInput) {
     );
   }
 
-  // Trang da ton tai (cho phat hien retry doi object key)
-  const existing = await db.page.findMany({
-    where: { chapterId: chapter.id, pageNumber: { in: pageNumbers } },
-    select: { pageNumber: true, objectKey: true },
-  });
-  const existingMap = new Map(existing.map((e) => [e.pageNumber, e.objectKey]));
+  // Existing pages
+  const { data: existing } = await supabase
+    .from("pages")
+    .select("page_number, object_key")
+    .eq("chapter_id", chapter.id)
+    .in("page_number", pageNumbers);
+
+  const existingMap = new Map((existing ?? []).map((e: any) => [e.page_number, e.object_key]));
 
   const replacedOldKeys: string[] = [];
   for (const p of input.pages) {
@@ -312,82 +307,66 @@ export async function finalizePages(input: PagesFinalizeInput) {
     if (oldKey && oldKey !== p.objectKey) replacedOldKeys.push(oldKey);
   }
 
-  // ---- B3: Ghi nhan DB (transaction) ----
-  await db.$transaction(async (tx) => {
-    for (const p of input.pages) {
-      await tx.page.upsert({
-        where: { chapterId_pageNumber: { chapterId: chapter.id, pageNumber: p.pageNumber } },
-        update: {
-          objectKey: p.objectKey,
-          fileName: p.fileName,
-          mimeType: p.mimeType,
-          fileSize: p.fileSize,
-          width: p.width ?? null,
-          height: p.height ?? null,
-        },
-        create: {
-          chapterId: chapter.id,
-          pageNumber: p.pageNumber,
-          objectKey: p.objectKey,
-          fileName: p.fileName,
-          mimeType: p.mimeType,
-          fileSize: p.fileSize,
-          width: p.width ?? null,
-          height: p.height ?? null,
-        },
-      });
+  // B3: Ghi nhan DB
+  for (const p of input.pages) {
+    await supabase.from("pages").upsert(
+      {
+        chapter_id: chapter.id,
+        page_number: p.pageNumber,
+        object_key: p.objectKey,
+        file_name: p.fileName,
+        mime_type: p.mimeType,
+        file_size: p.fileSize,
+        width: p.width ?? null,
+        height: p.height ?? null,
+      },
+      { onConflict: "chapter_id,page_number" }
+    );
+  }
+
+  // Confirm storage objects
+  for (const p of input.pages) {
+    const { count } = await supabase
+      .from("storage_objects")
+      .update({
+        status: "CONFIRMED",
+        confirmed_at: new Date().toISOString(),
+        chapter_id: chapter.id,
+        manga_id: chapter.manga_id,
+        file_name: p.fileName,
+        file_size: p.fileSize,
+        mime_type: p.mimeType,
+      })
+      .eq("object_key", p.objectKey)
+      .neq("status", "DELETE_PENDING");
+    if (count === 0) {
+      throw new ApiError(`${p.objectKey}: object dang cho xoa hoac chua dang ky`, 409, "finalize_conflict");
     }
+  }
 
-    // Confirm storage objects (da verify qua HeadObject o B2)
-    // Conditional confirm: tu choi neu object dang DELETE_PENDING (abort
-    // dang claim) hoac khong ton tai — tranh blind upsert tai tao row
-    // tro toi object da bi xoa.
-    for (const p of input.pages) {
-      const updated = await tx.storageObject.updateMany({
-        where: { objectKey: p.objectKey, status: { not: "DELETE_PENDING" } },
-        data: {
-          status: "CONFIRMED",
-          confirmedAt: new Date(),
-          chapterId: chapter.id,
-          mangaId: chapter.mangaId,
-          fileName: p.fileName,
-          fileSize: p.fileSize,
-          mimeType: p.mimeType,
-        },
-      });
-      if (updated.count === 0) {
-        // Row khong ton tai hoac dang DELETE_PENDING — abort da claim.
-        throw new ApiError(
-          `${p.objectKey}: object dang cho xoa hoac chua dang ky`,
-          409,
-          "finalize_conflict"
-        );
-      }
-    }
+  const { count: totalCount } = await supabase
+    .from("pages")
+    .select("*", { count: "exact", head: true })
+    .eq("chapter_id", chapter.id);
 
-    const total = await tx.page.count({ where: { chapterId: chapter.id } });
-    await tx.chapter.update({ where: { id: chapter.id }, data: { pageCount: total } });
-  });
+  await supabase.from("chapters").update({ page_count: totalCount ?? 0 }).eq("id", chapter.id);
 
-  // ---- B4: Cleanup object bi thay the (ngoai transaction — safe) ----
-  // CHI xoa key khong con duoc tham chieu SAU B3:
-  // (a) loai key duoc dung lai trong chinh batch nay (move/renumber);
-  // (b) re-check tham chieu page sau transaction (siblings: setMangaCover,
-  //     cleanupOrphanKeys deu re-check truoc khi safe-delete).
+  // B4: Cleanup replaced objects
   const batchKeys = new Set(input.pages.map((p) => p.objectKey));
   const candidates = [...new Set(replacedOldKeys)].filter((k) => !batchKeys.has(k));
   if (candidates.length > 0) {
-    const stillReferenced = await db.page.findMany({
-      where: { objectKey: { in: candidates } },
-      select: { objectKey: true },
-    });
-    const refSet = new Set(stillReferenced.map((r) => r.objectKey));
+    const { data: stillReferenced } = await supabase
+      .from("pages")
+      .select("object_key")
+      .in("object_key", candidates);
+    const refSet = new Set((stillReferenced ?? []).map((r: any) => r.object_key));
     const toDelete = candidates.filter((k) => !refSet.has(k));
     if (toDelete.length > 0) {
-      await db.storageObject.updateMany({
-        where: { objectKey: { in: toDelete }, status: { in: ["PENDING", "CONFIRMED"] } },
-        data: { status: "DELETE_PENDING" },
-      }).catch(() => undefined);
+      await supabase
+        .from("storage_objects")
+        .update({ status: "DELETE_PENDING" })
+        .in("object_key", toDelete)
+        .in("status", ["PENDING", "CONFIRMED"]);
       const result = await safeDeleteObjects(toDelete);
       await removeMetadataIfDeleted(result.removed).catch(() => undefined);
       if (result.pending.length > 0) {
@@ -396,54 +375,58 @@ export async function finalizePages(input: PagesFinalizeInput) {
     }
   }
 
-  const pageCount = await db.page.count({ where: { chapterId: chapter.id } });
-  return { chapterId: chapter.id, pageCount };
+  const { count: finalCount } = await supabase
+    .from("pages")
+    .select("*", { count: "exact", head: true })
+    .eq("chapter_id", chapter.id);
+
+  return { chapterId: chapter.id, pageCount: finalCount ?? 0 };
 }
 
-/** Xoa 1 trang: R2 object + row + cap nhat pageCount (safe delete) */
 export async function deletePage(pageId: string) {
-  const page = await db.page.findUnique({ where: { id: pageId }, include: { chapter: true } });
+  const { data: page } = await supabase
+    .from("pages")
+    .select("*, chapter:chapters(id)")
+    .eq("id", pageId)
+    .maybeSingle();
   if (!page) throw new ApiError("Không tìm thấy trang.", 404, "not_found");
 
-  // 1) Mark DELETE_PENDING truoc khi xoa DB
-  await db.storageObject.updateMany({
-    where: { objectKey: page.objectKey, status: { in: ["PENDING", "CONFIRMED"] } },
-    data: { status: "DELETE_PENDING" },
-  });
+  await supabase
+    .from("storage_objects")
+    .update({ status: "DELETE_PENDING" })
+    .eq("object_key", page.object_key)
+    .in("status", ["PENDING", "CONFIRMED"]);
 
-  // 2) Xoa DB
-  await db.page.delete({ where: { id: pageId } });
-  const pageCount = await db.page.count({ where: { chapterId: page.chapterId } });
-  await db.chapter.update({ where: { id: page.chapterId }, data: { pageCount } });
+  await supabase.from("pages").delete().eq("id", pageId);
 
-  // 3) Xoa R2 + 4) chi go metadata khi xac nhan xoa
-  const result = await safeDeleteObjects([page.objectKey]);
+  const { count: pageCount } = await supabase
+    .from("pages")
+    .select("*", { count: "exact", head: true })
+    .eq("chapter_id", page.chapter_id);
+
+  await supabase.from("chapters").update({ page_count: pageCount ?? 0 }).eq("id", page.chapter_id);
+
+  const result = await safeDeleteObjects([page.object_key]);
   const removedCount = await removeMetadataIfDeleted(result.removed).catch(() => 0);
 
-  return { deleted: true, pageCount, objectsRemoved: removedCount, objectsPendingRetry: result.pending.length };
+  return { deleted: true, pageCount: pageCount ?? 0, objectsRemoved: removedCount, objectsPendingRetry: result.pending.length };
 }
 
-/** Xoa toan bo trang cua chuong (che do "thay the toan bo") — safe delete */
 export async function clearPages(chapterId: string) {
-  const pages = await db.page.findMany({
-    where: { chapterId },
-    select: { objectKey: true },
-  });
-  const keys = pages.map((p) => p.objectKey);
+  const { data: pages } = await supabase.from("pages").select("object_key").eq("chapter_id", chapterId);
+  const keys = (pages ?? []).map((p: any) => p.object_key);
 
-  // 1) Mark DELETE_PENDING
   if (keys.length > 0) {
-    await db.storageObject.updateMany({
-      where: { objectKey: { in: keys }, status: { in: ["PENDING", "CONFIRMED"] } },
-      data: { status: "DELETE_PENDING" },
-    });
+    await supabase
+      .from("storage_objects")
+      .update({ status: "DELETE_PENDING" })
+      .in("object_key", keys)
+      .in("status", ["PENDING", "CONFIRMED"]);
   }
 
-  // 2) Xoa DB
-  await db.page.deleteMany({ where: { chapterId } });
-  await db.chapter.update({ where: { id: chapterId }, data: { pageCount: 0 } });
+  await supabase.from("pages").delete().eq("chapter_id", chapterId);
+  await supabase.from("chapters").update({ page_count: 0 }).eq("id", chapterId);
 
-  // 3) Xoa R2 + 4) chi go metadata khi xac nhan xoa
   let removedCount = 0;
   let retryNeeded = 0;
   if (keys.length > 0) {
@@ -458,58 +441,52 @@ export async function clearPages(chapterId: string) {
   return { cleared: removedCount, objectsPendingRetry: retryNeeded };
 }
 
-/** Payload cho Reader: pages + presigned URLs + prev/next + progress */
 export async function getReaderPayload(
   mangaId: string,
   chapterId: string,
   userId: string
 ): Promise<ReaderPayloadDto | null> {
-  const [manga, chapter] = await Promise.all([
-    db.manga.findUnique({ where: { id: mangaId }, select: { id: true, title: true } }),
-    db.chapter.findUnique({ where: { id: chapterId } }),
-  ]);
-  if (!manga || !chapter || chapter.mangaId !== mangaId) return null;
+  const { data: manga } = await supabase.from("mangas").select("id, title").eq("id", mangaId).maybeSingle();
+  const { data: chapter } = await supabase.from("chapters").select("*").eq("id", chapterId).maybeSingle();
+  if (!manga || !chapter || chapter.manga_id !== mangaId) return null;
 
-  const [pages, order, progress] = await Promise.all([
-    db.page.findMany({
-      where: { chapterId },
-      orderBy: { pageNumber: "asc" },
-    }),
+  const [pagesRes, order, progressRes] = await Promise.all([
+    supabase.from("pages").select("*").eq("chapter_id", chapterId).order("page_number", { ascending: true }),
     getChapterOrder(mangaId),
-    db.readingProgress.findUnique({
-      where: { userId_mangaId: { userId, mangaId } },
-      select: { pageNumber: true, scrollPosition: true, chapterId: true },
-    }),
+    supabase.from("reading_progress").select("page_number, scroll_position, chapter_id").eq("user_id", userId).eq("manga_id", mangaId).maybeSingle(),
   ]);
 
-  const urls = await Promise.all(pages.map((p) => presignGet(p.objectKey)));
+  const pages = pagesRes.data ?? [];
+  const urls = await Promise.all(pages.map((p: any) => presignGet(p.object_key)));
 
   const idx = order.findIndex((c) => c.id === chapterId);
   const prev = idx > 0 ? order[idx - 1] : null;
   const next = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : null;
 
+  const progress = progressRes.data;
+
   return {
     manga: { id: manga.id, title: manga.title },
     chapter: {
       id: chapter.id,
-      chapterNumber: chapter.chapterNumber,
+      chapterNumber: chapter.chapter_number,
       title: chapter.title,
       volume: chapter.volume,
-      pageCount: chapter.pageCount,
+      pageCount: chapter.page_count,
     },
-    pages: pages.map((p, i) => ({
-      pageNumber: p.pageNumber,
+    pages: pages.map((p: any, i: number) => ({
+      pageNumber: p.page_number,
       url: urls[i],
       width: p.width,
       height: p.height,
-      fileSize: Number(p.fileSize),
-      mimeType: p.mimeType,
+      fileSize: Number(p.file_size),
+      mimeType: p.mime_type,
     })),
     prevChapter: prev ? { id: prev.id, chapterNumber: prev.chapterNumber } : null,
     nextChapter: next ? { id: next.id, chapterNumber: next.chapterNumber } : null,
     progress:
-      progress && progress.chapterId === chapterId
-        ? { pageNumber: progress.pageNumber, scrollPosition: progress.scrollPosition }
+      progress && progress.chapter_id === chapterId
+        ? { pageNumber: progress.page_number, scrollPosition: progress.scroll_position }
         : null,
   };
 }
