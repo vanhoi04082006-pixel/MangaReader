@@ -182,15 +182,20 @@ bun run dev                   # http://localhost:3000  (Windows: bun run dev:win
 ## 7. Deploy lên Vercel
 
 1. Fork/import repo `MangaReader`, framework tự nhận Next.js.
-2. **Environment Variables** (Production): toàn bộ biến trong `.env.example` với:
+2. **Environment Variables** (Production) — đặt **đúng danh sách dưới đây**, KHÔNG copy trọn bộ `.env.example`:
    - `DATABASE_URL` = connection string **Session pooler** của Supabase (`...pooler.supabase.com:5432/postgres?pgbouncer=true&connection_limit=1`)
-   - `AUTH_PROVIDER=supabase`, `ADMIN_USER_ID=<uuid>`, đã chạy migration SQL + bootstrap admin
-   - `NEXT_PUBLIC_APP_URL=https://<domain>`
+   - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_SECRET_KEY` (Supabase Dashboard > Project Settings > API)
+   - `AUTH_PROVIDER=supabase`, `ADMIN_EMAIL`, `ADMIN_USER_ID=<uuid>` — yêu cầu đã chạy migration SQL + bootstrap admin **trước đó** (mục 4)
+   - `AUTH_SECRET` (chuỗi 64 hex riêng cho production — không dùng lại của dev)
+   - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_ENDPOINT`
+   - `NEXT_PUBLIC_APP_URL=https://<domain>`; tùy chọn: `R2_ALLOWED_ORIGINS=https://<domain>`, `STORAGE_QUOTA_GB`, `SIGNED_URL_EXPIRY_SECONDS`
+   - **KHÔNG đặt `ADMIN_PASSWORD` vào Vercel Production env** — biến này **bootstrap-only**: chỉ cần trong `.env` local khi chạy `scripts/bootstrap-admin.ts` lần đầu. Sau khi tài khoản đã tồn tại, đổi mật khẩu tại Supabase Dashboard > Authentication rồi xóa hẳn biến khỏi mọi env. Login/refresh/logout/readiness không đọc `ADMIN_PASSWORD` khi tài khoản đã tồn tại (mật khẩu do Supabase Auth quản lý).
 3. **Build Command**: `bun run db:generate:pg && bun run build` (sinh Prisma client PostgreSQL rồi build).
-4. Giới hạn cần nhớ trên Vercel:
+4. **CI gate trước khi promote**: chỉ merge vào `main` khi GitHub Actions CI xanh (lint, typecheck, unit tests, `bun audit`, production build — xem `.github/workflows/ci.yml`). Vercel deploy Production từ `main`, nên mọi commit vào `main` phải đi qua PR có CI xanh (branch protection yêu cầu các check này). Nếu deploy thủ công qua Vercel CLI: chạy `bun audit --audit-level=high` tại local trước khi promote.
+5. Giới hạn cần nhớ trên Vercel:
    - Body request tới serverless ~4.5MB → **proxy upload chỉ nhận ≤ 4MB**; file lớn đi presigned PUT trực tiếp (cần CORS bucket — mục 5).
    - Giải nén ZIP diễn ra **phía client** — không vướng giới hạn request size.
-5. Sau deploy: `/api/health` (công khai) trả `ok`; đăng nhập rồi mở Settings xem Trạng thái hệ thống (DB + R2) hoặc gọi `/api/health/ready`.
+6. Sau deploy: `/api/health` (công khai) trả `ok`; đăng nhập rồi mở Settings xem Trạng thái hệ thống (DB + R2) hoặc gọi `/api/health/ready`. Danh sách kiểm tra đầy đủ trước/sau deploy: `docs/MANGAREADER_LOCAL_VALIDATION_RUNBOOK.md`.
 
 ---
 
@@ -241,8 +246,10 @@ Chi tiết đầy đủ mọi kiểm soát + bằng chứng kiểm thử: `docs/
 
 ```bash
 bun run dev                    # integration test cần server đang chạy
-bun test tests/                # 114 test: 60 unit + 54 integration
+bun test tests/                # 124 test: 69 unit + 55 integration
 ```
+
+- **CI (GitHub Actions)**: mỗi PR/push vào `main` tự chạy lint, typecheck, unit tests, `bun audit` và production build (`.github/workflows/ci.yml`). Integration chỉ chạy trong CI khi bật biến repo `ENABLE_INTEGRATION_TESTS=true` + cấu hình secrets staging (mặc định bỏ qua).
 
 - **Unit**: provider fail-closed, ranh giới admin identity, CSRF, JWT expiry, ZIP hardening (bomb/caps), **hợp đồng header key Supabase (sb_* mới + legacy JWT)**, resolve đường dẫn SQLite (Windows/UNC/query param), JWT payload/session_id, luồng verify-rls (cleanup luôn chạy — fetch mock).
 - **Integration** (chạy với Supabase + R2 thật): login đúng/sai/non-admin, user Supabase thứ 2 bị 403 ở mọi API bảo vệ, CSRF cross-site, upload roundtrip thật (presign → R2 → finalize verify → xóa đồng bộ), giới hạn proxy, abort an toàn, logout revoke, **revocation cross-runtime (replay token ở tiến trình riêng sau logout bị từ chối; token revoked không DELETE/cleanup/mutation được)**, rate limit 429.
