@@ -44,6 +44,8 @@ export const mangaCreateSchema = z.object({
     .optional()
     .nullable(),
   genres: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
+  /** "Nguồn" từ info.txt — dung de check trung (migration 0002, optional) */
+  sourceUrl: z.string().trim().max(500).optional().nullable(),
 });
 
 export const mangaUpdateSchema = mangaCreateSchema.partial();
@@ -130,6 +132,11 @@ export const mangaListQuerySchema = z.object({
     .transform((v) => v === "true"),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(60).default(24),
+});
+
+export const mangaDuplicateCheckQuerySchema = z.object({
+  title: z.string().trim().min(1, "Thiếu tên truyện").max(300),
+  sourceUrl: z.string().trim().max(500).optional(),
 });
 
 export const chapterListQuerySchema = z.object({

@@ -47,7 +47,19 @@ export interface MangaDetailDto extends MangaSummaryDto {
   description: string | null;
   artist: string | null;
   publicationYear: number | null;
+  /** "Nguồn" (info.txt) — null nếu DB chưa chạy migration 0002 */
+  sourceUrl: string | null;
   sizeBytes: number;
+}
+
+/** Kết quả check trùng truyện (GET /api/mangas/check-duplicate) */
+export interface DuplicateMatchDto {
+  id: string;
+  title: string;
+  alternativeTitles: string | null;
+  sourceUrl: string | null;
+  /** Khớp theo tiêu chí nào */
+  by: "title" | "altTitle" | "sourceUrl";
 }
 
 export interface ChapterDto {

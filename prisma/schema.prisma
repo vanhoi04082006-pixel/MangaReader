@@ -42,6 +42,7 @@ model Manga {
   status            String    @default("ONGOING") // ONGOING | COMPLETED | HIATUS | DROPPED
   publicationYear   Int?
   coverImageKey     String?
+  sourceUrl         String? // "Nguon" tu info.txt — nhan dien truyen trung (migration 0002)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
