@@ -254,11 +254,38 @@ begin
 end $$;
 
 -- =============================================================
--- SEED the loai mac dinh
+-- SEED the loai mac dinh (223 muc — dong bo voi DEFAULT_GENRES trong
+-- src/services/genre-service.ts)
 -- =============================================================
 insert into genres (name) values
-  ('Action'),('Adventure'),('Comedy'),('Drama'),('Fantasy'),('Horror'),('Mystery'),
-  ('Romance'),('Sci-Fi'),('Slice of Life'),('Sports'),('Supernatural'),
-  ('Psychological'),('Seinen'),('Shounen'),('Josei'),('Shoujo'),('Isekai'),
-  ('Martial Arts'),('Mecha'),('Historical'),('School Life'),('Tragedy'),('Thriller')
+  ('3D Hentai'),('AI Generated'),('Action'),('Adult'),('Adventure'),('Ahegao'),('Anal'),('Angel'),
+  ('Animal'),('Animal Girl'),('Apron'),('Artist CG'),('Aunt'),('Áo dài'),('Ảnh động'),('BBM'),
+  ('BBW'),('BDSM'),('Based Game'),('Beach'),('Bestiality'),('Big Ass'),('Big Boobs'),('Big Penis'),
+  ('Bikini'),('Bisexual'),('Black Skin'),('Blackmail'),('Blindfold'),('Bloomers'),('BlowJobs'),
+  ('Body Swap'),('Body Writing'),('Bodysuit'),('Bondage'),('Breast Sucking'),('BreastJobs'),('Brocon'),
+  ('Brother'),('Bukkake'),('Bunny Girl'),('Business Suit'),('Chastity belt'),('Che nhiều'),('Che ít'),
+  ('Cheating'),('Cheerleader'),('Chikan'),('Chinese Dress'),('Collar'),('Comedy'),('Comic'),('Condom'),
+  ('Cosplay'),('Cousin'),('Creampie'),('Cross-dressing'),('Crotch Tattoo'),('Cuckold'),('Cum swap'),
+  ('Cunnilingus'),('Có che'),('Dark Skin'),('Daughter'),('Deepthroat'),('Demon'),('DemonGirl'),
+  ('Devil'),('DevilGirl'),('Dirty'),('DirtyOldMan'),('Double Penetration'),('Doujinshi'),('Drama'),
+  ('Drug'),('Drunk'),('Ecchi'),('Elder Sister'),('Elf'),('Exhibitionism'),('Facesitting'),('Fantasy'),
+  ('Father'),('Females only'),('Femdom'),('Feminization'),('Filming'),('Fingering'),('Footjob'),
+  ('Full Color'),('Furry'),('Futanari'),('Gag'),('Gangbang'),('Garter Belts'),('Gender Bender'),
+  ('Ghost'),('Glasses'),('Glory hole'),('Group'),('Guro'),('Gyaru'),('Góc Nhìn Nữ'),('Hairjob'),
+  ('Hairy'),('Handjob'),('Harem'),('Hell No'),('Hentaivn'),('Hidden sex'),('Historical'),('Horror'),
+  ('Housewife'),('Humiliation'),('Idol'),('Imouto'),('Incest'),('Insect'),('Invisible'),('Isekai'),
+  ('Không che'),('Kimono'),('Kissing'),('Kuudere'),('Lactation'),('Lingerie'),('Lolicon'),('Maids'),
+  ('Males only'),('Manhua'),('Manhwa'),('Masturbation'),('Mature'),('Mermaid'),('Miko'),('Milf'),
+  ('Mind Break'),('Mind Control'),('Monster'),('Monstergirl'),('Mother'),('NTR'),('Nakadashi'),
+  ('Netori'),('Ngọt'),('Nipple Play'),('Non-hen'),('Nun'),('Nurse'),('Office Lady'),('Old Man'),
+  ('Oneshot'),('Oral'),('Osananajimi'),('Paizuri'),('Pantyhose'),('Pegging'),('Piercing'),('Police'),
+  ('Ponytail'),('Pregnant'),('Princess'),('Prostitution'),('Rape'),('Rimjob'),('Romance'),('Ryona'),
+  ('Scat'),('School uniform'),('SchoolGirl'),('See-through'),('Series'),('Sex Toys'),('Shimapan'),
+  ('Short'),('Shota'),('Shoujo'),('Siscon'),('Sister'),('Sixty-Nine'),('Slave'),('Sleeping'),
+  ('Small Boobs'),('Soft Incest'),('Son'),('Spanking'),('Sport'),('Squirting'),('Stockings'),
+  ('Strap-on'),('Succubus'),('Supernatural'),('Sweating'),('Swimsuit'),('Tail plug'),('Tall Girl'),
+  ('Teacher'),('Tentacles'),('Threesome'),('Time Stop'),('Tomboy'),('Tracksuit'),('Transformation'),
+  ('Trap'),('Truyện Việt'),('Tsundere'),('Tu Tiên'),('Twins'),('Twintails'),('Underwater'),('Vampire'),
+  ('Vanilla'),('Virgin'),('Voyeurism'),('Vtuber'),('Watersports'),('Webtoon'),('Wormhole'),('X-ray'),
+  ('Yandere'),('Yaoi'),('Yuri'),('Zombie')
 on conflict (name) do nothing;
