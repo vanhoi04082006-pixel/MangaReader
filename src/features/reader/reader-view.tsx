@@ -98,8 +98,10 @@ const isScrollingRef = useRef(false);
     };
   }, [showToolbar]);
 
-  // An toolbar khi cuon (doc) — chi hien lai khi dung cuon (o yen 1 cho)
-  const onScrollActivity = useCallback(() => {
+  // An toolbar khi doc/cuon (wheel/touchmove/scroll) — chi hien lai khi
+  // dung lai (o yen 1 cho) ~1.4s. Dung wheel/touchmove vi scroll event
+  // khong fire tin cay trong mot so truong hop (container fixed/fullscreen).
+  const onReadingActivity = useCallback(() => {
     if (!settings.autoHideToolbar || settingsOpen || chapterListOpen) return;
     isScrollingRef.current = true;
     setToolbarVisible(false);
@@ -115,12 +117,13 @@ const isScrollingRef = useRef(false);
     const container = document.querySelector(".h-full.w-full.overflow-y-auto");
     const targets: EventTarget[] = [window];
     if (container) targets.push(container);
-    targets.forEach((t) => t.addEventListener("scroll", onScrollActivity, { passive: true }));
+    const events = ["scroll", "wheel", "touchmove"];
+    targets.forEach((t) => events.forEach((ev) => t.addEventListener(ev, onReadingActivity, { passive: true })));
     return () => {
-      targets.forEach((t) => t.removeEventListener("scroll", onScrollActivity));
+      targets.forEach((t) => events.forEach((ev) => t.removeEventListener(ev, onReadingActivity)));
       if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
     };
-  }, [onScrollActivity, payload]);
+  }, [onReadingActivity, payload]);
 
   // Khi mo panel thi luon hien toolbar
   const isToolbarVisible = toolbarVisible || settingsOpen || chapterListOpen;
