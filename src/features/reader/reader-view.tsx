@@ -55,6 +55,8 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
   const [currentPage, setCurrentPage] = useState(1);
 
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+const scrollHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+const isScrollingRef = useRef(false);
   const lastSavedRef = useRef<{ page: number; fraction: number } | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -83,14 +85,42 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
   }, [armHideTimer]);
 
   useEffect(() => {
-    const onMove = () => showToolbar();
+    const onMove = () => {
+      if (isScrollingRef.current) return;
+      showToolbar();
+    };
+    const onDown = () => showToolbar();
     window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerdown", onMove);
+    window.addEventListener("pointerdown", onDown);
     return () => {
       window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerdown", onMove);
+      window.removeEventListener("pointerdown", onDown);
     };
   }, [showToolbar]);
+
+  // An toolbar khi cuon (doc) — chi hien lai khi dung cuon (o yen 1 cho)
+  const onScrollActivity = useCallback(() => {
+    if (!settings.autoHideToolbar || settingsOpen || chapterListOpen) return;
+    isScrollingRef.current = true;
+    setToolbarVisible(false);
+    if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
+    scrollHideTimerRef.current = setTimeout(() => {
+      isScrollingRef.current = false;
+      setToolbarVisible(true);
+      armHideTimer();
+    }, 1400);
+  }, [settings.autoHideToolbar, settingsOpen, chapterListOpen, armHideTimer]);
+
+  useEffect(() => {
+    const container = document.querySelector(".h-full.w-full.overflow-y-auto");
+    const targets: EventTarget[] = [window];
+    if (container) targets.push(container);
+    targets.forEach((t) => t.addEventListener("scroll", onScrollActivity, { passive: true }));
+    return () => {
+      targets.forEach((t) => t.removeEventListener("scroll", onScrollActivity));
+      if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
+    };
+  }, [onScrollActivity]);
 
   // Khi mo panel thi luon hien toolbar
   const isToolbarVisible = toolbarVisible || settingsOpen || chapterListOpen;
@@ -358,11 +388,11 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
       <AnimatePresence>
         {toolbarVisible && (
           <motion.div
-            initial={{ opacity: 0, y: -16 }}
+            initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -16 }}
+            exit={{ opacity: 0, y: 16 }}
             transition={{ duration: 0.2 }}
-            className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-3 pb-3 pt-[max(0.75rem,env(safe-area-inset-top,0px))]"
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]"
           >
             <div className="pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-1.5 rounded-xl border bg-background/85 p-1.5 shadow-lg backdrop-blur-md">
               <Button variant="ghost" size="icon" className="h-9 w-9" onClick={exitReader} aria-label="Thoát">
