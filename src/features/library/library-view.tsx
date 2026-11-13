@@ -155,7 +155,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
               )}
             >
               <SlidersHorizontal className="h-4 w-4" />
-              <span className="hidden sm:inline">{genre || "Thể loại"}</span>
+              <span className="max-w-20 truncate sm:max-w-none">{genre || "Thể loại"}</span>
               {activeFilterCount > 0 && !genre && (
                 <span className="rounded-full bg-primary px-1.5 text-[10px] font-bold text-primary-foreground">
                   {activeFilterCount}
@@ -167,7 +167,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
             <div className="scrollbar-thin max-h-80 overflow-y-auto p-2">
               <button
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent",
+                  "flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-accent",
                   !genre && "font-medium text-primary"
                 )}
                 onClick={() => setQuery({ genre: null, page: null })}
@@ -178,13 +178,13 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
                 <button
                   key={g.id}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent",
+                    "flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-accent",
                     genre === g.name && "font-medium text-primary"
                   )}
                   onClick={() => setQuery({ genre: g.name === genre ? null : g.name, page: null })}
                 >
                   <Checkbox checked={genre === g.name} className="pointer-events-none" />
-                  <span className="flex-1 text-left">{g.name}</span>
+                  <span className="flex-1 truncate text-left">{g.name}</span>
                   <span className="text-xs text-muted-foreground">{g.mangaCount}</span>
                 </button>
               ))}
@@ -196,7 +196,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
           value={status || "all"}
           onValueChange={(v) => setQuery({ status: v === "all" ? null : v, page: null })}
         >
-          <SelectTrigger className="h-9 w-[130px] sm:w-[150px]">
+          <SelectTrigger className="h-9 w-[125px] sm:w-[150px]">
             <SelectValue placeholder="Trạng thái" />
           </SelectTrigger>
           <SelectContent>
@@ -215,7 +215,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
             setQuery({ sort: s, order: o, page: null });
           }}
         >
-          <SelectTrigger className="h-9 w-[150px] sm:w-[190px]">
+          <SelectTrigger className="h-9 w-[140px] sm:w-[190px]">
             <SelectValue placeholder="Sắp xếp" />
           </SelectTrigger>
           <SelectContent>
@@ -264,7 +264,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
         />
       ) : isLoading ? (
         view === "grid" ? (
-          <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-5 min-[420px]:grid-cols-3 sm:gap-x-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
             {Array.from({ length: 12 }).map((_, i) => (
               <div key={i} className="space-y-2.5">
                 <Skeleton className="aspect-[2/3] rounded-xl" />
@@ -295,7 +295,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
               ? "Thử bỏ bớt điều kiện lọc hoặc tìm với từ khóa khác."
               : favoritesOnly
                 ? "Nhấn vào trái tim ở trang chi tiết truyện để thêm vào yêu thích."
-                : "Thêm truyện đầu tiên và upload ảnh để bắt đầu sưu tập."
+                : "Thêm nhiều truyện cùng lúc bằng cách chọn thư mục chứa các bộ truyện."
           }
           action={
             activeFilterCount > 0 ? (

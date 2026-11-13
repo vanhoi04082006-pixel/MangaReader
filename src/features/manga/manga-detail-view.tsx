@@ -89,7 +89,7 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
     return (
       <div className="space-y-6">
         <div className="flex flex-col gap-6 md:flex-row">
-          <Skeleton className="h-96 w-64 rounded-xl" />
+          <Skeleton className="mx-auto h-72 w-48 rounded-xl md:mx-0 md:h-96 md:w-64" />
           <div className="flex-1 space-y-4">
             <Skeleton className="h-10 w-2/3" />
             <Skeleton className="h-5 w-1/3" />
@@ -128,7 +128,7 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
         )}
 
         <div className="relative flex flex-col gap-6 md:flex-row">
-          <div className="mx-auto w-48 shrink-0 sm:w-56 md:mx-0 md:w-64">
+          <div className="mx-auto w-44 shrink-0 sm:w-52 md:mx-0 md:w-64">
             <div className="relative aspect-[2/3] overflow-hidden rounded-xl border shadow-2xl">
               <CoverImage src={manga.coverUrl} alt={`Bìa ${manga.title}`} />
             </div>
@@ -220,23 +220,27 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
                 className={cn("gap-2", manga.isFavorite && "font-semibold")}
                 onClick={() => toggleFavorite.mutate(manga.id)}
                 aria-pressed={manga.isFavorite}
+                aria-label="Yêu thích"
               >
                 <Heart className={cn("h-4 w-4", manga.isFavorite && "fill-current")} />
-                {manga.isFavorite ? "Đã yêu thích" : "Yêu thích"}
+                <span className="hidden sm:inline">
+                  {manga.isFavorite ? "Đã yêu thích" : "Yêu thích"}
+                </span>
               </Button>
 
-              <Button variant="outline" className="gap-2" onClick={() => setEditOpen(true)}>
+              <Button variant="outline" className="gap-2" onClick={() => setEditOpen(true)} aria-label="Sửa thông tin truyện">
                 <Pencil className="h-4 w-4" />
-                Sửa
+                <span className="hidden sm:inline">Sửa</span>
               </Button>
 
               <Button
                 variant="outline"
                 className="gap-2 text-destructive hover:text-destructive"
                 onClick={() => setConfirmDeleteManga(true)}
+                aria-label="Xóa truyện"
               >
                 <Trash2 className="h-4 w-4" />
-                Xóa
+                <span className="hidden sm:inline">Xóa</span>
               </Button>
             </div>
 
@@ -292,7 +296,7 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
               aria-label={chapterSort === "asc" ? "Đang xếp tăng dần" : "Đang xếp giảm dần"}
             >
               {chapterSort === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              {chapterSort === "asc" ? "Tăng dần" : "Giảm dần"}
+              <span className="hidden sm:inline">{chapterSort === "asc" ? "Tăng dần" : "Giảm dần"}</span>
             </Button>
             <Button
               variant="outline"
@@ -301,11 +305,11 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
               onClick={() => navigate(`/upload?manga=${manga.id}`)}
             >
               <ImageUp className="h-4 w-4" />
-              Upload trang
+              <span className="hidden sm:inline">Upload trang</span>
             </Button>
             <Button size="sm" className="gap-1.5" onClick={() => setChapterFormOpen(true)}>
               <Plus className="h-4 w-4" />
-              Thêm chương
+              <span className="hidden sm:inline">Thêm chương</span>
             </Button>
           </div>
         </div>
@@ -320,13 +324,13 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
           <>
             <ul className="divide-y rounded-xl border bg-card">
               {chaptersData.items.map((c) => (
-                <li key={c.id} className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/40">
+                <li key={c.id} className="group flex items-center gap-2 px-3 py-3 transition-colors hover:bg-accent/40 sm:gap-3 sm:px-4">
                   <button
                     className="flex min-w-0 flex-1 items-center gap-3 text-left"
                     onClick={() => c.pageCount > 0 && navigate(`/reader/${manga.id}/${c.id}`)}
                     disabled={c.pageCount === 0}
                   >
-                    <span className="w-14 shrink-0 text-left font-mono text-sm font-bold tabular-nums text-primary">
+                    <span className="w-12 shrink-0 text-left font-mono text-sm font-bold tabular-nums text-primary sm:w-14">
                       {c.chapterNumber}
                     </span>
                     <div className="min-w-0 flex-1">
@@ -420,7 +424,7 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
           <EmptyState
             icon={Layers}
             title="Chưa có chương nào"
-            description="Tạo chương đầu tiên rồi upload ảnh ZIP hoặc thư mục."
+            description="Dùng tính năng nhập từ thư mục để thêm toàn bộ chương cùng lúc."
             action={
               <Button className="gap-2" onClick={() => setChapterFormOpen(true)}>
                 <Plus className="h-4 w-4" />

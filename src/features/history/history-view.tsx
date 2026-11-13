@@ -98,7 +98,7 @@ export function HistoryView() {
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Button
                     size="sm"
-                    className="h-8 gap-1.5 px-3"
+                    className="h-8 gap-1.5 px-2.5 sm:px-3"
                     onClick={() => navigate(`/reader/${h.mangaId}/${h.chapterId}?page=${h.pageNumber}`)}
                   >
                     <Play className="h-3.5 w-3.5" />
@@ -143,7 +143,7 @@ export function HistoryView() {
         open={confirmClearAll}
         onOpenChange={setConfirmClearAll}
         title="Xóa toàn bộ lịch sử đọc?"
-        description="Tiến độ đọc hiện tại của các truyện (continue reading) sẽ được giữ lại, chỉ xóa danh sách lịch sử."
+        description="Tiến độ đọc hiện tại của các truyện (tiếp tục đọc) sẽ được giữ lại, chỉ xóa danh sách lịch sử."
         confirmLabel="Xóa tất cả"
         destructive
         onConfirm={async () => {
