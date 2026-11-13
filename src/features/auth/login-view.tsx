@@ -53,9 +53,9 @@ export function LoginView() {
         className="relative z-10 w-full max-w-sm"
       >
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <img src="/logo.svg" alt="Logo MangaReader" className="h-16 w-16 rounded-2xl shadow-lg" />
+          <img src="/logo.svg" alt="Logo Tsundoku" className="h-16 w-16 rounded-2xl shadow-lg" />
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight">MangaReader</h1>
+            <h1 className="text-2xl font-extrabold tracking-tight">Tsundoku</h1>
             <p className="mt-1 text-sm text-muted-foreground">Thư viện truyện tranh cá nhân</p>
           </div>
         </div>

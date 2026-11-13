@@ -24,11 +24,19 @@ export function UploadView() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Thêm truyện</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Nhập hàng loạt từ thư mục hoặc upload lẻ từng chương.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">Thêm truyện</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Nhập hàng loạt từ thư mục hoặc upload lẻ từng chương.
+          </p>
+        </div>
+        <img
+          src="/mascots/happy-hug.png"
+          alt=""
+          aria-hidden
+          className="h-16 w-auto shrink-0 select-none sm:h-20"
+        />
       </div>
 
       <Tabs defaultValue={defaultTab} className="gap-5">

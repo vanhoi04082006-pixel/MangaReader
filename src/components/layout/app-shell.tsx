@@ -140,10 +140,17 @@ function SidebarContent() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2.5 px-5 py-5">
-        <img src="/logo.svg" alt="Logo MangaReader" className="h-9 w-9 rounded-xl" />
+        <img
+          src="/mascots/badge.png"
+          alt="Tsundoku — Personal Manga Reader"
+          className="h-9 w-9 rounded-xl shadow-[0_0_18px_-4px_color-mix(in_oklch,var(--primary)_60%,transparent)]"
+        />
         <div>
-          <p className="text-base font-extrabold leading-tight tracking-tight">MangaReader</p>
-          <p className="text-[11px] text-muted-foreground">Thư viện truyện cá nhân</p>
+          <p className="text-base font-extrabold leading-tight tracking-tight">
+            Tsundoku
+            <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-[oklch(0.71_0.25_345)] align-middle shadow-[0_0_8px_oklch(0.71_0.25_345)]" />
+          </p>
+          <p className="text-[11px] text-muted-foreground">Personal Manga Reader</p>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto scrollbar-thin">
@@ -232,7 +239,7 @@ function BottomNav() {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-aurora">
       {/* Sidebar desktop */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-sidebar-border bg-sidebar md:flex md:flex-col">
         <SidebarContent />

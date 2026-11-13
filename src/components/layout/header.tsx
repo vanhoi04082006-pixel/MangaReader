@@ -65,7 +65,11 @@ export function Header() {
         {/* Logo — hiện trên mobile (sidebar ẩn, thay cho nút menu:
             điều hướng chính đã có thanh tab dưới cùng) */}
         <a href="#/" className="flex items-center gap-2 md:hidden" aria-label="Về trang chủ">
-          <img src="/logo.svg" alt="" className="h-8 w-8 rounded-lg" />
+          <img
+            src="/mascots/badge.png"
+            alt="Tsundoku"
+            className="h-8 w-8 rounded-lg shadow-[0_0_14px_-4px_color-mix(in_oklch,var(--primary)_60%,transparent)]"
+          />
         </a>
 
         <div className="relative min-w-0 flex-1 sm:max-w-sm md:max-w-md">
@@ -107,7 +111,7 @@ export function Header() {
           {/* Nút thêm truyện: ẩn trên mobile (đã có tab "Thêm truyện" dưới cùng) */}
           <Button
             size="sm"
-            className={cn("hidden gap-2 sm:inline-flex", "font-semibold")}
+            className={cn("hidden gap-2 font-semibold glow-primary sm:inline-flex")}
             onClick={() => navigate("/upload")}
           >
             <Plus className="h-4 w-4" />

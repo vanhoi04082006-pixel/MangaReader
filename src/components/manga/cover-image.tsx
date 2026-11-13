@@ -33,12 +33,9 @@ export function CoverImage({ src, alt, className }: CoverImageProps) {
         aria-label={alt}
       >
         <img
-          src="/placeholder-cover.png"
+          src="/placeholder-cover.svg"
           alt=""
-          className={cn(
-            "h-full w-full object-cover",
-            status === "error" && "opacity-40 grayscale"
-          )}
+          className={cn("h-full w-full object-cover", status === "error" && "opacity-60")}
           loading="lazy"
         />
         {status === "error" && (

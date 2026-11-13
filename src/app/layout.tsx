@@ -15,28 +15,41 @@ const mono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  // Giải quyết URL tuyệt đối cho og:image (override bằng env khi deploy)
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"),
   title: {
-    default: "MangaReader — Thư viện truyện cá nhân",
-    template: "%s · MangaReader",
+    default: "Tsundoku — Thư viện truyện cá nhân",
+    template: "%s · Tsundoku",
   },
   description:
-    "Thư viện truyện tranh cá nhân với Cloudflare R2 — upload, quản lý và đọc truyện mọi lúc mọi nơi.",
-  applicationName: "MangaReader",
+    "Tsundoku — Personal Manga Reader. Thư viện truyện tranh cá nhân: nhập truyện hàng loạt từ thư mục, quản lý và đọc truyện mọi lúc mọi nơi.",
+  applicationName: "Tsundoku",
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "48x48", type: "image/x-icon" },
+      { url: "/logo.svg", type: "image/svg+xml" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    shortcut: [{ url: "/favicon.ico", type: "image/x-icon" }],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
   appleWebApp: {
     // iOS: cho phep "Add to Home Screen" mo duoi dang standalone (khong
     // Safari chrome); black-translucent => noi dung tron man hinh sau
     // status bar (phoi hop viewport-fit=cover + safe-area padding).
     capable: true,
-    title: "MangaReader",
+    title: "Tsundoku",
     statusBarStyle: "black-translucent",
   },
-  icons: {
-    icon: [
-      { url: "/logo.svg", type: "image/svg+xml" },
-      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
-    ],
-    apple: "/icons/apple-touch-icon.png",
+  openGraph: {
+    title: "Tsundoku — Personal Manga Reader",
+    description:
+      "Thư viện truyện tranh cá nhân — nhập truyện hàng loạt từ thư mục, quản lý và đọc truyện mọi lúc mọi nơi.",
+    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "Tsundoku — Personal Manga Reader" }],
+    type: "website",
+    siteName: "Tsundoku",
   },
   robots: { index: false, follow: false },
 };
@@ -49,8 +62,8 @@ export const viewport: Viewport = {
   // de khong bi noi dung chim vao notch/home indicator.
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#18120f" },
-    { media: "(prefers-color-scheme: light)", color: "#faf8f6" },
+    { media: "(prefers-color-scheme: dark)", color: "#150c22" },
+    { media: "(prefers-color-scheme: light)", color: "#f7f3fc" },
   ],
 };
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, History as HistoryIcon, Play, Trash2 } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Play, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/common/states";
@@ -58,7 +58,7 @@ export function HistoryView() {
         </div>
       ) : data && data.items.length === 0 ? (
         <EmptyState
-          icon={HistoryIcon}
+          mascot="sleeping"
           title="Chưa có lịch sử đọc"
           description="Mở bất kỳ chương nào để bắt đầu — vị trí đọc sẽ được tự động lưu."
           action={

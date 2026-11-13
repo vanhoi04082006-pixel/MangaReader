@@ -153,7 +153,7 @@ export function SettingsView() {
         <h2 className="font-bold">Về ứng dụng</h2>
         <div className="mt-3 space-y-1.5 text-sm text-muted-foreground">
           <p>
-            <span className="font-semibold text-foreground">MangaReader</span> — Thư viện truyện tranh cá nhân
+            <span className="font-semibold text-foreground">Tsundoku</span> — Thư viện truyện tranh cá nhân
           </p>
           <p>Next.js 16 · React 19 · Prisma · Cloudflare R2 · Supabase Auth</p>
           <p className="flex items-center gap-1.5">

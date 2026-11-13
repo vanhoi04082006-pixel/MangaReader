@@ -73,7 +73,7 @@ export function MangaApp() {
           animate={{ opacity: 1, scale: 1 }}
           className="flex flex-col items-center gap-4"
         >
-          <img src="/logo.svg" alt="MangaReader" className="h-16 w-16 rounded-2xl" />
+          <img src="/logo.svg" alt="Tsundoku" className="h-16 w-16 rounded-2xl" />
           <div className="h-1 w-32 overflow-hidden rounded-full bg-muted">
             <motion.div
               className="h-full w-1/3 rounded-full bg-primary"
