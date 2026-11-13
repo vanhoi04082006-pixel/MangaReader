@@ -2,7 +2,7 @@
 // Genre service: danh sach the loai, upsert theo ten, seed mac dinh
 // =============================================================
 
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export const DEFAULT_GENRES = [
   "Action", "Adventure", "Comedy", "Drama", "Fantasy", "Horror", "Mystery",
@@ -12,28 +12,34 @@ export const DEFAULT_GENRES = [
 ];
 
 export async function listGenres() {
-  const genres = await db.genre.findMany({
-    orderBy: { name: "asc" },
-    include: { _count: { select: { mangas: true } } },
-  });
-  return genres.map((g) => ({ id: g.id, name: g.name, mangaCount: g._count.mangas }));
+  const { data: genres, error } = await supabase
+    .from("genres")
+    .select("id, name")
+    .order("name", { ascending: true });
+  if (error) throw new Error(`listGenres failed: ${error.message}`);
+
+  // Count mangas per genre
+  const result = [];
+  for (const g of genres ?? []) {
+    const { count } = await supabase
+      .from("manga_genres")
+      .select("*", { count: "exact", head: true })
+      .eq("genre_id", g.id);
+    result.push({ id: g.id, name: g.name, mangaCount: count ?? 0 });
+  }
+  return result;
 }
 
-/** Seed cac the loai mac dinh (idempotent) */
 export async function seedDefaultGenres() {
-  const existing = await db.genre.findMany({ select: { name: true } });
-  const existingNames = new Set(existing.map((g) => g.name.toLowerCase()));
+  const { data: existing } = await supabase.from("genres").select("name");
+  const existingNames = new Set((existing ?? []).map((g: any) => g.name.toLowerCase()));
   for (const name of DEFAULT_GENRES) {
     if (!existingNames.has(name.toLowerCase())) {
-      await db.genre.create({ data: { name } }).catch(() => undefined);
+      await supabase.from("genres").insert({ name }).then(() => undefined, () => undefined);
     }
   }
 }
 
-/**
- * Dam bao cac the loai theo ten ton tai (case-insensitive).
- * Tra ve map ten (da chuan hoa) -> genreId.
- */
 export async function ensureGenres(names: string[]): Promise<Map<string, string>> {
   const result = new Map<string, string>();
   const wanted = Array.from(
@@ -42,19 +48,38 @@ export async function ensureGenres(names: string[]): Promise<Map<string, string>
   if (wanted.length === 0) return result;
 
   const lowered = wanted.map((n) => n.toLowerCase());
-  const existing = await db.genre.findMany({
-    where: { name: { in: [...wanted, ...lowered] } },
-  });
-  const byLower = new Map(existing.map((g) => [g.name.toLowerCase(), g]));
+  const { data: existing } = await supabase
+    .from("genres")
+    .select("id, name")
+    .in("name", [...wanted, ...lowered]);
+
+  const byLower = new Map((existing ?? []).map((g: any) => [g.name.toLowerCase(), g]));
 
   for (const name of wanted) {
     const found = byLower.get(name.toLowerCase());
     if (found) {
       result.set(name, found.id);
     } else {
-      const created = await db.genre.create({ data: { name } });
-      byLower.set(name.toLowerCase(), created);
-      result.set(name, created.id);
+      const { data: created, error } = await supabase
+        .from("genres")
+        .insert({ name })
+        .select("id, name")
+        .single();
+      if (error) {
+        // Race: another request created it -> read again
+        const { data: retry } = await supabase
+          .from("genres")
+          .select("id, name")
+          .ilike("name", name)
+          .maybeSingle();
+        if (retry) {
+          byLower.set(name.toLowerCase(), retry);
+          result.set(name, retry.id);
+        }
+      } else if (created) {
+        byLower.set(name.toLowerCase(), created);
+        result.set(name, created.id);
+      }
     }
   }
   return result;

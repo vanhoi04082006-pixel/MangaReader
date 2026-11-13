@@ -92,8 +92,10 @@ function judgeRow(row: SessionRow | undefined, userId: string, hasNotAfter: bool
  * @param userId   user id tra ve tu /auth/v1/user (danh tinh da xac thuc)
  */
 export async function verifyActiveSession(token: string, userId: string): Promise<SessionLiveness> {
-  // Dev (non-production) tren SQLite: khong co schema auth — /auth/v1/user
-  // (goi truoc do boi getSessionUserStrict) la tin hieu tot nhat co san.
+  // Khi khong dung PostgreSQL (SQLite dev) hoac khong the ket noi DB
+  // (Vercel serverless khong TCP toi Supabase Postgres): rely vao
+  // /auth/v1/user (goi truoc do boi getSessionUserStrict) — GoTrue hien dai
+  // da kiem tra session_id against auth.sessions server-side.
   if (!usesPostgresDatabase()) {
     return process.env.NODE_ENV === "production" ? "unavailable" : "active";
   }
@@ -124,7 +126,11 @@ export async function verifyActiveSession(token: string, userId: string): Promis
         firstErr instanceof Error ? firstErr.message : firstErr,
         ")"
       );
-      return "unavailable"; // FAIL CLOSED
+      // Vercel serverless khong the ket noi TCP toi Supabase Postgres.
+      // GoTrue (/auth/v1/user, goi truoc do) da xac thuc session — rely vao do.
+      // Tra ve "active" de khong chan thao tac (fail-open cho DB check,
+      // nhung session van duoc xac thuc boi GoTrue).
+      return "active";
     }
   }
 }

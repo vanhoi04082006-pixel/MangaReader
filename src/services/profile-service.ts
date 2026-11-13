@@ -2,16 +2,25 @@
 // Profile service: dam bao profile ton tai cho user da xac thuc
 // =============================================================
 
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export async function ensureProfile(user: { id: string; email: string }) {
-  return db.profile.upsert({
-    where: { id: user.id },
-    update: { email: user.email },
-    create: { id: user.id, email: user.email },
-  });
+  // Upsert: neu da ton tai thi update email, neu chua thi tao moi
+  const { data, error } = await supabase
+    .from("profiles")
+    .upsert({ id: user.id, email: user.email }, { onConflict: "id" })
+    .select()
+    .single();
+  if (error) throw new Error(`ensureProfile failed: ${error.message}`);
+  return data;
 }
 
 export async function getProfile(userId: string) {
-  return db.profile.findUnique({ where: { id: userId } });
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw new Error(`getProfile failed: ${error.message}`);
+  return data;
 }

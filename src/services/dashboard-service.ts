@@ -1,8 +1,8 @@
 // =============================================================
-// Dashboard service: tong hop so lieu thuc te tu DB
+// Dashboard service: tong hop so lieu thuc te tu DB (Supabase REST)
 // =============================================================
 
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { getEnv } from "@/lib/env";
 import { continueReading } from "@/services/progress-service";
 import { getMangaSummaries } from "@/services/manga-service";
@@ -13,55 +13,48 @@ export async function getDashboard(userId: string): Promise<DashboardDto> {
 
   const [mangaCount, chapterCount, pageCount, storageAgg, favoriteCount, genreCount] =
     await Promise.all([
-      db.manga.count(),
-      db.chapter.count(),
-      db.page.count(),
-      db.storageObject.aggregate({
-        where: { status: "CONFIRMED" },
-        _sum: { fileSize: true },
-      }),
-      db.favorite.count({ where: { userId } }),
-      db.genre.count(),
+      supabase.from("mangas").select("*", { count: "exact", head: true }),
+      supabase.from("chapters").select("*", { count: "exact", head: true }),
+      supabase.from("pages").select("*", { count: "exact", head: true }),
+      supabase.from("storage_objects").select("file_size").eq("status", "CONFIRMED"),
+      supabase.from("favorites").select("*", { count: "exact", head: true }).eq("user_id", userId),
+      supabase.from("genres").select("*", { count: "exact", head: true }),
     ]);
 
-  const [continueList, recentMangas, recentUploadsRaw] = await Promise.all([
+  const storageUsedBytes = (storageAgg.data ?? []).reduce((sum: number, r: any) => sum + Number(r.file_size ?? 0), 0);
+
+  const [continueList, recentMangasRes, recentUploadsRaw] = await Promise.all([
     continueReading(userId, 8),
-    db.manga.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 10,
-      select: { id: true },
-    }),
-    db.storageObject.findMany({
-      where: { status: "CONFIRMED", kind: "PAGE" },
-      orderBy: { confirmedAt: "desc" },
-      take: 10,
-      include: {
-        manga: { select: { title: true } },
-        chapter: { select: { chapterNumber: true } },
-      },
-    }),
+    supabase.from("mangas").select("id").order("created_at", { ascending: false }).limit(10),
+    supabase
+      .from("storage_objects")
+      .select("*, manga:mangas(title), chapter:chapters(chapter_number)")
+      .eq("status", "CONFIRMED")
+      .eq("kind", "PAGE")
+      .order("confirmed_at", { ascending: false })
+      .limit(10),
   ]);
 
-  const recentlyAdded = await getMangaSummaries(recentMangas.map((m) => m.id), userId);
+  const recentlyAdded = await getMangaSummaries((recentMangasRes.data ?? []).map((m: any) => m.id), userId);
 
-  const recentUploads: RecentUploadItemDto[] = recentUploadsRaw.map((u) => ({
+  const recentUploads: RecentUploadItemDto[] = (recentUploadsRaw.data ?? []).map((u: any) => ({
     id: u.id,
-    fileName: u.fileName,
+    fileName: u.file_name,
     kind: u.kind,
-    fileSize: Number(u.fileSize),
-    createdAt: (u.confirmedAt ?? u.createdAt).toISOString(),
+    fileSize: Number(u.file_size),
+    createdAt: (u.confirmed_at ?? u.created_at),
     mangaTitle: u.manga?.title ?? null,
-    chapterNumber: u.chapter?.chapterNumber ?? null,
+    chapterNumber: u.chapter?.chapter_number ?? null,
   }));
 
   return {
-    mangaCount,
-    chapterCount,
-    pageCount,
-    storageUsedBytes: Number(storageAgg._sum.fileSize ?? 0),
+    mangaCount: mangaCount.count ?? 0,
+    chapterCount: chapterCount.count ?? 0,
+    pageCount: pageCount.count ?? 0,
+    storageUsedBytes,
     storageQuotaBytes: env.storageQuotaBytes,
-    favoriteCount,
-    genreCount,
+    favoriteCount: favoriteCount.count ?? 0,
+    genreCount: genreCount.count ?? 0,
     continueReading: continueList,
     recentlyAdded,
     recentUploads,
