@@ -36,7 +36,8 @@ export const qk = {
   dashboard: ["dashboard"] as const,
   mangas: (filters: string) => ["mangas", filters] as const,
   manga: (id: string) => ["manga", id] as const,
-  chapters: (mangaId: string, sort: string, page: number) => ["chapters", mangaId, sort, page] as const,
+  chapters: (mangaId: string, sort: string, page: number, pageSize: number) =>
+    ["chapters", mangaId, sort, page, pageSize] as const,
   chapter: (id: string) => ["chapter", id] as const,
   reader: (id: string) => ["reader", id] as const,
   genres: ["genres"] as const,
@@ -96,7 +97,7 @@ export function useManga(id: string | null) {
 
 export function useChapters(mangaId: string | null, sort: "asc" | "desc" = "desc", page = 1, pageSize = 100) {
   return useQuery({
-    queryKey: qk.chapters(mangaId ?? "none", sort, page),
+    queryKey: qk.chapters(mangaId ?? "none", sort, page, pageSize),
     queryFn: () =>
       api.get<Paginated<ChapterDto>>(`/api/mangas/${mangaId}/chapters?sort=${sort}&page=${page}&pageSize=${pageSize}`),
     enabled: Boolean(mangaId),

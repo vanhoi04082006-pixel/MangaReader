@@ -82,7 +82,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
     order,
     favorites: favoritesOnly,
     page,
-    pageSize: 24,
+    pageSize: 20,
   };
 
   const { data, isLoading, isError, error, refetch } = useMangas(filters);
