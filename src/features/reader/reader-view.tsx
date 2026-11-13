@@ -120,7 +120,7 @@ const isScrollingRef = useRef(false);
       targets.forEach((t) => t.removeEventListener("scroll", onScrollActivity));
       if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
     };
-  }, [onScrollActivity]);
+  }, [onScrollActivity, payload]);
 
   // Khi mo panel thi luon hien toolbar
   const isToolbarVisible = toolbarVisible || settingsOpen || chapterListOpen;
