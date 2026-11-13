@@ -317,6 +317,29 @@ describe("assertSameOrigin (CSRF protection)", () => {
     expect(() => assertSameOrigin(req)).not.toThrow();
   });
 
+  test("cross-scheme same-host Origin (http vs https) voi cookie + x-forwarded-proto -> 403 (lead 4.2)", async () => {
+    setNodeEnv("development");
+    process.env.AUTH_PROVIDER = "supabase";
+    const { assertSameOrigin, ApiError } = await import("../src/lib/api");
+    const { NextRequest } = await import("next/server");
+    const req = new NextRequest("http://localhost:3000/api/mangas", {
+      method: "POST",
+      headers: {
+        host: "localhost:3000",
+        "x-forwarded-proto": "https",
+        origin: "http://localhost:3000",
+        cookie: `${ACCESS_COOKIE}=token`,
+      },
+    });
+    try {
+      assertSameOrigin(req);
+      throw new Error("KHONG NEN cho qua");
+    } catch (err) {
+      expect(err instanceof ApiError).toBe(true);
+      expect((err as InstanceType<typeof ApiError>).status).toBe(403);
+    }
+  });
+
   test("mutation KHONG Origin KHONG Referer (voi cookie) -> 403 (fail closed)", async () => {
     const { assertSameOrigin, ApiError } = await import("../src/lib/api");
     const { NextRequest } = await import("next/server");
