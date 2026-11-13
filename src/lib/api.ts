@@ -83,23 +83,29 @@ export function assertSameOrigin(req: NextRequest): void {
     throw new ApiError("Yêu cầu cross-site bị từ chối.", 403, "csrf");
   }
 
+  const forwardedProto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
   const host =
     req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || req.headers.get("host");
+
+  // Xac dinh scheme cua request (fail-closed: neu khong co proto header
+  // o production (TLS-terminating proxy) thi dung protocol cua request URL).
+  const requestProto = forwardedProto || new URL(req.url).protocol.replace(":", "");
+  const canonicalOrigin = host ? `${requestProto}://${host}` : null;
 
   const originHeader = req.headers.get("origin");
   const referer = req.headers.get("referer");
 
-  const originHost = (() => {
+  const originOrigin = (() => {
     if (originHeader && originHeader !== "null") {
       try {
-        return new URL(originHeader).host;
+        return new URL(originHeader).origin;
       } catch {
         return "__invalid__";
       }
     }
     if (referer) {
       try {
-        return new URL(referer).host;
+        return new URL(referer).origin;
       } catch {
         return "__invalid__";
       }
@@ -107,22 +113,22 @@ export function assertSameOrigin(req: NextRequest): void {
     return null; // khong co ca Origin lan Referer
   })();
 
-  if (originHost === null) {
+  if (originOrigin === null) {
     // Trinh duyet hien dai luon gui Origin (fetch/XHR/form POST).
     // Mat ca hai header voi cookie -> bat thuong -> chan (fail closed).
     throw new ApiError("Thiếu thông tin nguồn yêu cầu (Origin/Referer).", 403, "csrf");
   }
-  if (host) {
-    // Host chinh la anchor tin cay (browser khong the gia mao Host header)
-    if (originHost !== host) {
+  if (canonicalOrigin) {
+    // So sanh FULL origin (scheme + host) — chong cross-scheme same-host.
+    if (originOrigin !== canonicalOrigin) {
       throw new ApiError("Yêu cầu cross-site bị từ chối.", 403, "csrf");
     }
     return;
   }
   // Khong co Host header (hiem) — so voi NEXT_PUBLIC_APP_URL lam anchor thu hai
   try {
-    const appHost = new URL(getEnv().appUrl).host;
-    if (originHost !== appHost) {
+    const appOrigin = new URL(getEnv().appUrl).origin;
+    if (originOrigin !== appOrigin) {
       throw new ApiError("Yêu cầu cross-site bị từ chối.", 403, "csrf");
     }
   } catch {

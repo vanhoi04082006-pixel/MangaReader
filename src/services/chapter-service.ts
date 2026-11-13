@@ -339,21 +339,13 @@ export async function finalizePages(input: PagesFinalizeInput) {
     }
 
     // Confirm storage objects (da verify qua HeadObject o B2)
+    // Conditional confirm: tu choi neu object dang DELETE_PENDING (abort
+    // dang claim) hoac khong ton tai — tranh blind upsert tai tao row
+    // tro toi object da bi xoa.
     for (const p of input.pages) {
-      await tx.storageObject.upsert({
-        where: { objectKey: p.objectKey },
-        update: {
-          status: "CONFIRMED",
-          confirmedAt: new Date(),
-          chapterId: chapter.id,
-          mangaId: chapter.mangaId,
-          fileName: p.fileName,
-          fileSize: p.fileSize,
-          mimeType: p.mimeType,
-        },
-        create: {
-          objectKey: p.objectKey,
-          kind: "PAGE",
+      const updated = await tx.storageObject.updateMany({
+        where: { objectKey: p.objectKey, status: { not: "DELETE_PENDING" } },
+        data: {
           status: "CONFIRMED",
           confirmedAt: new Date(),
           chapterId: chapter.id,
@@ -363,6 +355,14 @@ export async function finalizePages(input: PagesFinalizeInput) {
           mimeType: p.mimeType,
         },
       });
+      if (updated.count === 0) {
+        // Row khong ton tai hoac dang DELETE_PENDING — abort da claim.
+        throw new ApiError(
+          `${p.objectKey}: object dang cho xoa hoac chua dang ky`,
+          409,
+          "finalize_conflict"
+        );
+      }
     }
 
     const total = await tx.page.count({ where: { chapterId: chapter.id } });

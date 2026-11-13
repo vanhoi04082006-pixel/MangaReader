@@ -71,3 +71,6 @@ db/*.db-journal
 # pasted content / temp uploads (khong commit)
 /upload/
 tool-results/
+
+# next dev generated agent rules
+AGENTS.md

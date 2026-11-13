@@ -227,7 +227,7 @@ create policy "profiles self select"
 create policy "profiles self insert"
   on profiles for insert
   to authenticated
-  with check (auth.uid() = id);
+  with check (auth.uid() = id AND email = (auth.jwt() ->> 'email'));
 create policy "profiles admin all"
   on profiles for all
   to authenticated

@@ -176,9 +176,17 @@ function isReadDenied(r: RestResult): boolean {
   return false;
 }
 
-/** Ghi (INSERT/UPDATE/DELETE) bi chan -> 403 + ma RLS; hoac 0 row anh huong (200 + "[]"). */
+/** Ghi (INSERT/UPDATE/DELETE) bi chan.
+ *   - 403: RLS permission denied.
+ *   - 401: role thieu quyen table-level (anon khong co INSERT/UPDATE/DELETE).
+ *   - 204: PostgREST tra ve khi UPDATE/DELETE anh huong 0 row (RLS loc het) —
+ *           body rong, khong phai 200 + "[]".
+ *   - 200 + "[]": UPDATE/DELETE anh huong 0 row (khi Prefer: return=representation).
+ */
 function isWriteDenied(r: RestResult): boolean {
-  if (r.status === 403) return true;
+  if (r.status === 403) return true; // RLS permission denied
+  if (r.status === 401) return true; // role thieu quyen table-level
+  if (r.status === 204) return true; // 0 row anh huong (RLS loc het)
   if (r.status === 200 && r.text.trim() === "[]") return true; // UPDATE/DELETE 0 row
   return false;
 }

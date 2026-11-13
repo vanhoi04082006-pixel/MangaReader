@@ -36,12 +36,23 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
 
   const { objectKeys } = await parseBody(req, uploadsAbortSchema);
 
-  // Chi target object dang PENDING — khong abort object da CONFIRMED (du lieu thuc)
-  const rows = await db.storageObject.findMany({
+  // ---- Claim atomically (TOCTOU-safe) ----
+  // Danh dau PENDING -> DELETE_PENDING TRUOC khi cham R2, de concurrent
+  // finalize (B3) phat hien va tu choi; tranh race abort xoa object vua
+  // duoc finalize CONFIRMED. updateMany la atomic o DB level — chi mot
+  // request claim duoc moi row.
+  await db.storageObject.updateMany({
     where: { objectKey: { in: objectKeys }, status: "PENDING" },
+    data: { status: "DELETE_PENDING" },
+  });
+
+  // Chi target object vua claim (DELETE_PENDING) — khong abort object
+  // da CONFIRMED (du lieu thuc) hoac khong ton tai.
+  const claimedRows = await db.storageObject.findMany({
+    where: { objectKey: { in: objectKeys }, status: "DELETE_PENDING" },
     select: { objectKey: true },
   });
-  const pendingKeys = rows.map((r) => r.objectKey);
+  const pendingKeys = claimedRows.map((r) => r.objectKey);
   const skipped = objectKeys.filter((k) => !pendingKeys.includes(k));
 
   if (pendingKeys.length === 0) {
@@ -52,13 +63,13 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   const result = await safeDeleteObjects(pendingKeys);
   if (result.removed.length > 0) {
     await db.storageObject.deleteMany({
-      where: { objectKey: { in: result.removed } },
+      where: { objectKey: { in: result.removed }, status: "DELETE_PENDING" },
     });
   }
+  // Object xoa that bai giu trang thai DELETE_PENDING de cleanup retry.
 
   return ok({
     deleted: result.removed.length,
-    // Giu nguyen row cho object xoa that bai — cleanup route se retry
     pendingRetry: result.pending.length,
     skipped,
   });

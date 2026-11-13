@@ -130,27 +130,76 @@ export async function sbGetUser(accessToken: string): Promise<{ id: string; emai
   return { id: user.id, email: user.email };
 }
 
-/** Lay user theo email (admin API) */
+/** Lay user theo email (admin API) — phan trang va doi chieu email chinh xac */
 export async function sbAdminGetUserByEmail(
   email: string
 ): Promise<{ id: string; email?: string } | null> {
   const env = getEnv();
-  let res: Response;
-  try {
-    res = await fetch(
-      `${env.supabase.url}/auth/v1/admin/users?email=${encodeURIComponent(email)}`,
-      { headers: serviceHeaders(), cache: "no-store" }
+  const targetEmail = email.trim().toLowerCase();
+  const perPage = 100;
+  const maxPages = 100;
+
+  for (let page = 1; page <= maxPages; page++) {
+    let res: Response;
+
+    try {
+      const url = new URL(
+        `${env.supabase.url}/auth/v1/admin/users`
+      );
+      url.searchParams.set("page", String(page));
+      url.searchParams.set("per_page", String(perPage));
+
+      res = await fetch(url.toString(), {
+        headers: serviceHeaders(),
+        cache: "no-store",
+      });
+    } catch {
+      throw new SupabaseAuthError(
+        "Không kết nối được Supabase (lỗi mạng hoặc URL)",
+        503,
+        "network"
+      );
+    }
+
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      throw friendlyError(data, res.status);
+    }
+
+    const data = (await res.json()) as {
+      users?: Array<{ id: string; email?: string }>;
+    };
+
+    const users = data.users;
+
+    if (!Array.isArray(users)) {
+      throw new SupabaseAuthError(
+        "Supabase Admin API trả về dữ liệu user không hợp lệ",
+        502,
+        "invalid_response"
+      );
+    }
+
+    const found = users.find(
+      (user) =>
+        typeof user.email === "string" &&
+        user.email.trim().toLowerCase() === targetEmail
     );
-  } catch {
-    throw new SupabaseAuthError("Không kết nối được Supabase (lỗi mạng hoặc URL)", 503, "network");
+
+    if (found) {
+      return { id: found.id, email: found.email };
+    }
+
+    if (users.length < perPage) {
+      return null;
+    }
   }
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    throw friendlyError(data, res.status);
-  }
-  const data = (await res.json()) as { users?: Array<{ id: string; email?: string }> };
-  const found = data.users?.[0];
-  return found ? { id: found.id, email: found.email } : null;
+
+  throw new SupabaseAuthError(
+    "Đã vượt giới hạn phân trang khi tìm tài khoản Admin",
+    500,
+    "pagination_limit"
+  );
 }
 
 /** Tao user admin (dung bootstrap) — email_confirm = true (admin API — secret key) */

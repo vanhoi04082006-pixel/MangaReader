@@ -1,7 +1,7 @@
 // POST /api/auth/refresh — lam moi session (Supabase refresh token)
 // Rate limit theo IP de chong hammer endpoint nay.
 import { NextRequest, NextResponse } from "next/server";
-import { ok, fail, withErrorHandling } from "@/lib/api";
+import { ok, fail, withErrorHandling, assertSameOrigin } from "@/lib/api";
 import { getEnv, isAdminUser } from "@/lib/env";
 import { sbRefreshGrant, sbRevokeSession } from "@/lib/supabase-auth";
 import { REFRESH_COOKIE, setAuthCookies, getSessionUser, invalidateSessionCache, ACCESS_COOKIE } from "@/lib/session";
@@ -11,6 +11,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const POST = withErrorHandling(async (req: NextRequest) => {
+  // CSRF: refresh la mutation co cookie -> kiem tra origin (lead 4.1)
+  assertSameOrigin(req);
+
   const env = getEnv();
 
   // Rate limit refresh (chong hammer)
