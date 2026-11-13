@@ -39,9 +39,8 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   }
 
   // Xac thuc moi quan he du lieu
-  const { data: manga } = await supabase.from("mangas").select("id").eq("id", input.mangaId).maybeSingle();
-  if (!manga) return fail("Không tìm thấy truyện.", 404, "not_found");
-
+  // (FK chapters.manga_id -> mangas.id: chapter ton tai = manga ton tai,
+  //  nen voi PAGE chi can kiem tra chapter thuoc dung truyen.)
   if (input.kind === "PAGE") {
     if (!input.chapterId) {
       return fail("Thiếu ID chương để upload trang.", 400, "missing_chapter");
@@ -50,19 +49,21 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
     if (!chapter || chapter.manga_id !== input.mangaId) {
       return fail("Chương không thuộc truyện này.", 404, "not_found");
     }
+  } else {
+    const { data: manga } = await supabase.from("mangas").select("id").eq("id", input.mangaId).maybeSingle();
+    if (!manga) return fail("Không tìm thấy truyện.", 404, "not_found");
   }
 
   // ---- Kiem tra storage quota (server-side) ----
-  // Tinh: dung luong CONFIRMED + PENDING "con song" (tao < 24h — qua han se bi cleanup)
+  // Tinh: dung luong CONFIRMED + PENDING "con song" (tao < 24h — qua han se bi cleanup).
+  // 1 truy van duy nhat (or) thay vi 2 de giam latency round-trip.
   const env = getEnv();
   const activePendingSince = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const [confirmedRes, pendingRes] = await Promise.all([
-    supabase.from("storage_objects").select("file_size").eq("status", "CONFIRMED"),
-    supabase.from("storage_objects").select("file_size").eq("status", "PENDING").gte("created_at", activePendingSince),
-  ]);
-  const confirmedBytes = (confirmedRes.data ?? []).reduce((s: number, r: any) => s + Number(r.file_size ?? 0), 0);
-  const pendingBytes = (pendingRes.data ?? []).reduce((s: number, r: any) => s + Number(r.file_size ?? 0), 0);
-  const usedBytes = confirmedBytes + pendingBytes;
+  const { data: usedRows } = await supabase
+    .from("storage_objects")
+    .select("file_size")
+    .or(`status.eq.CONFIRMED,and(status.eq.PENDING,created_at.gte.${activePendingSince})`);
+  const usedBytes = (usedRows ?? []).reduce((s: number, r: any) => s + Number(r.file_size ?? 0), 0);
   if (usedBytes + input.fileSize > env.storageQuotaBytes) {
     return fail(
       `Vượt hạn mức lưu trữ (${Math.round(env.storageQuotaBytes / 1024 / 1024 / 1024)}GB). ` +

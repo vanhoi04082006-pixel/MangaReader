@@ -47,7 +47,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import {
   Select,
   SelectContent,
@@ -1063,7 +1063,9 @@ export function UploadView() {
 
                 {/* Bang trang */}
                 <div className="overflow-hidden rounded-lg border">
-                  <ScrollArea className="max-h-72">
+                  {/* Scroll thuần: Radix ScrollArea không scroll được với
+                      max-h trên root (viewport không bị chặn chiều cao). */}
+                  <div className="max-h-72 overflow-y-auto overscroll-contain scrollbar-thin">
                     <table className="w-full text-xs">
                       <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
                         <tr className="text-left text-muted-foreground">
@@ -1105,7 +1107,7 @@ export function UploadView() {
                         ))}
                       </tbody>
                     </table>
-                  </ScrollArea>
+                  </div>
                   {items.length > visibleRows.length ? (
                     <p className="border-t bg-muted/40 px-3 py-1.5 text-center text-[11px] text-muted-foreground">
                       và {items.length - visibleRows.length} trang nữa...

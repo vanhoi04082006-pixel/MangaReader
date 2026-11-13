@@ -26,11 +26,11 @@ export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
   return ok(
     {
       id: chapter.id,
-      chapterNumber: chapter.chapterNumber,
+      chapterNumber: chapter.chapter_number,
       title: chapter.title,
       volume: chapter.volume,
-      pageCount: chapter.pageCount,
-      createdAt: chapter.createdAt.toISOString(),
+      pageCount: chapter.page_count,
+      createdAt: chapter.created_at,
     },
     { status: 201 }
   );

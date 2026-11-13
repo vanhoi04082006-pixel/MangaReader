@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ok, fail, requireAdmin, withErrorHandling } from "@/lib/api";
 import { getReaderPayload } from "@/services/chapter-service";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,26 +14,27 @@ export const GET = withErrorHandling<Ctx>(async (req, ctx) => {
   const user = await requireAdmin(req);
   const { id } = await ctx.params;
 
-  const chapter = await db.chapter.findUnique({
-    where: { id },
-    select: { mangaId: true },
-  });
+  const { data: chapter } = await supabase
+    .from("chapters")
+    .select("id, manga_id")
+    .eq("id", id)
+    .maybeSingle();
   if (!chapter) return fail("Không tìm thấy chương.", 404, "not_found");
 
-  const payload = await getReaderPayload(chapter.mangaId, id, user.id);
+  const payload = await getReaderPayload(chapter.manga_id, id, user.id);
   if (!payload) return fail("Không tìm thấy chương.", 404, "not_found");
 
   // Ghi nhan lich su doc (mo chuong = bat dau doc)
-  await db.readingHistory.upsert({
-    where: { userId_chapterId: { userId: user.id, chapterId: id } },
-    update: { readAt: new Date() },
-    create: {
-      userId: user.id,
-      mangaId: chapter.mangaId,
-      chapterId: id,
-      pageNumber: payload.progress?.pageNumber ?? 1,
+  await supabase.from("reading_history").upsert(
+    {
+      user_id: user.id,
+      manga_id: chapter.manga_id,
+      chapter_id: id,
+      page_number: payload.progress?.pageNumber ?? 1,
+      read_at: new Date().toISOString(),
     },
-  });
+    { onConflict: "user_id,chapter_id" }
+  );
 
   return ok(payload);
 });

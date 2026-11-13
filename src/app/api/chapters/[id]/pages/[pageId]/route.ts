@@ -1,7 +1,7 @@
 // DELETE /api/chapters/:id/pages/:pageId — xoa 1 trang (R2 + DB)
 import { NextRequest, NextResponse } from "next/server";
 import { ok, requireAdminDestructive, fail, withErrorHandling } from "@/lib/api";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { deletePage } from "@/services/chapter-service";
 
 export const runtime = "nodejs";
@@ -14,11 +14,12 @@ export const DELETE = withErrorHandling<Ctx>(async (req, ctx) => {
   await requireAdminDestructive(req);
   const { id, pageId } = await ctx.params;
 
-  const page = await db.page.findUnique({
-    where: { id: pageId },
-    select: { chapterId: true },
-  });
-  if (!page || page.chapterId !== id) {
+  const { data: page } = await supabase
+    .from("pages")
+    .select("id, chapter_id")
+    .eq("id", pageId)
+    .maybeSingle();
+  if (!page || page.chapter_id !== id) {
     return fail("Trang không thuộc chương này.", 404, "not_found");
   }
 

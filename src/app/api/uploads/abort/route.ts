@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ok, parseBody, requireAdminDestructive, withErrorHandling } from "@/lib/api";
 import { uploadsAbortSchema } from "@/schemas";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { safeDeleteObjects } from "@/services/storage-service";
 import { hitRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
@@ -39,20 +39,22 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   // ---- Claim atomically (TOCTOU-safe) ----
   // Danh dau PENDING -> DELETE_PENDING TRUOC khi cham R2, de concurrent
   // finalize (B3) phat hien va tu choi; tranh race abort xoa object vua
-  // duoc finalize CONFIRMED. updateMany la atomic o DB level — chi mot
-  // request claim duoc moi row.
-  await db.storageObject.updateMany({
-    where: { objectKey: { in: objectKeys }, status: "PENDING" },
-    data: { status: "DELETE_PENDING" },
-  });
+  // duoc finalize CONFIRMED. Update co dieu kien la atomic o DB level —
+  // chi request nao chay truoc claim duoc moi row.
+  await supabase
+    .from("storage_objects")
+    .update({ status: "DELETE_PENDING" })
+    .in("object_key", objectKeys)
+    .eq("status", "PENDING");
 
   // Chi target object vua claim (DELETE_PENDING) — khong abort object
   // da CONFIRMED (du lieu thuc) hoac khong ton tai.
-  const claimedRows = await db.storageObject.findMany({
-    where: { objectKey: { in: objectKeys }, status: "DELETE_PENDING" },
-    select: { objectKey: true },
-  });
-  const pendingKeys = claimedRows.map((r) => r.objectKey);
+  const { data: claimedRows } = await supabase
+    .from("storage_objects")
+    .select("object_key")
+    .in("object_key", objectKeys)
+    .eq("status", "DELETE_PENDING");
+  const pendingKeys = (claimedRows ?? []).map((r) => r.object_key);
   const skipped = objectKeys.filter((k) => !pendingKeys.includes(k));
 
   if (pendingKeys.length === 0) {
@@ -62,9 +64,11 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   // Safe delete: chi xoa row khi R2 xac nhan object da xoa / khong ton tai
   const result = await safeDeleteObjects(pendingKeys);
   if (result.removed.length > 0) {
-    await db.storageObject.deleteMany({
-      where: { objectKey: { in: result.removed }, status: "DELETE_PENDING" },
-    });
+    await supabase
+      .from("storage_objects")
+      .delete()
+      .in("object_key", result.removed)
+      .eq("status", "DELETE_PENDING");
   }
   // Object xoa that bai giu trang thai DELETE_PENDING de cleanup retry.
 

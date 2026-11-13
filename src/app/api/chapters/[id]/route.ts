@@ -10,7 +10,7 @@ import {
   listPages,
 } from "@/services/chapter-service";
 import { presignGetMany } from "@/lib/r2";
-import { db } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +21,7 @@ export const GET = withErrorHandling<Ctx>(async (req, ctx) => {
   await requireAdmin(req);
   const { id } = await ctx.params;
 
-  const chapter = await db.chapter.findUnique({ where: { id } });
+  const { data: chapter } = await supabase.from("chapters").select("*").eq("id", id).maybeSingle();
   if (!chapter) return fail("Không tìm thấy chương.", 404, "not_found");
 
   const pages = await listPages(id);
@@ -30,13 +30,13 @@ export const GET = withErrorHandling<Ctx>(async (req, ctx) => {
   return ok({
     chapter: {
       id: chapter.id,
-      mangaId: chapter.mangaId,
-      chapterNumber: chapter.chapterNumber,
+      mangaId: chapter.manga_id,
+      chapterNumber: chapter.chapter_number,
       title: chapter.title,
       volume: chapter.volume,
-      pageCount: chapter.pageCount,
-      createdAt: chapter.createdAt.toISOString(),
-      updatedAt: chapter.updatedAt.toISOString(),
+      pageCount: chapter.page_count,
+      createdAt: chapter.created_at,
+      updatedAt: chapter.updated_at,
     },
     pages: pages.map((p, i) => ({ ...p, url: urls[i] })),
   });
@@ -47,7 +47,7 @@ export const PATCH = withErrorHandling<Ctx>(async (req, ctx) => {
   const { id } = await ctx.params;
   const input = await parseBody(req, chapterUpdateSchema);
   const chapter = await updateChapter(id, input);
-  return ok({ id: chapter.id, updatedAt: chapter.updatedAt.toISOString() });
+  return ok({ id: chapter.id, updatedAt: chapter.updated_at });
 });
 
 export const DELETE = withErrorHandling<Ctx>(async (req, ctx) => {

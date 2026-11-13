@@ -18,8 +18,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { ok, fail, requireAdminMutation, withErrorHandling, ApiError } from "@/lib/api";
-import { r2, deleteObjects } from "@/lib/r2";
-import { db } from "@/lib/db";
+import { r2 } from "@/lib/r2";
+import { supabase } from "@/lib/supabase";
 import { MAX_FILE_SIZE, MAX_PROXY_FILE_SIZE, IMAGE_MIME_TYPES } from "@/schemas";
 import { getEnv } from "@/lib/env";
 import { hitRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
@@ -53,7 +53,11 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   }
 
   // Chi cho phep upload vao key da dang ky VA con PENDING
-  const row = await db.storageObject.findUnique({ where: { objectKey: key } });
+  const { data: row } = await supabase
+    .from("storage_objects")
+    .select("object_key, kind, status, mime_type, manga_id, chapter_id, file_size")
+    .eq("object_key", key)
+    .maybeSingle();
   if (!row) {
     throw new ApiError("Object key chưa được đăng ký. Hãy yêu cầu presign trước.", 400, "unregistered_key");
   }
@@ -66,18 +70,18 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   }
 
   // Kiem tra metadata + key thuoc namespace dung (mangas/<mangaId>/...)
-  if (row.mimeType && row.mimeType !== contentType) {
+  if (row.mime_type && row.mime_type !== contentType) {
     return fail("Content-Type không khớp metadata đã đăng ký.", 400, "mime_mismatch");
   }
   if (row.kind === "PAGE") {
-    if (!row.mangaId || !row.chapterId) {
+    if (!row.manga_id || !row.chapter_id) {
       throw new ApiError("Metadata object PAGE không đầy đủ.", 400, "bad_metadata");
     }
-    if (!key.startsWith(`mangas/${row.mangaId}/chapters/${row.chapterId}/`)) {
+    if (!key.startsWith(`mangas/${row.manga_id}/chapters/${row.chapter_id}/`)) {
       throw new ApiError("Object key không thuộc namespace của chương này.", 400, "bad_namespace");
     }
   } else if (row.kind === "COVER") {
-    if (!row.mangaId || !key.startsWith(`mangas/${row.mangaId}/covers/`)) {
+    if (!row.manga_id || !key.startsWith(`mangas/${row.manga_id}/covers/`)) {
       throw new ApiError("Object key không thuộc namespace cover của truyện này.", 400, "bad_namespace");
     }
   }
@@ -88,10 +92,10 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
 
   // Gioi han phu hop Vercel: proxy chi nhan file nho. File lon PHAI di
   // qua presigned PUT truc tiep (khong bi gioi han body size cua host).
-  // LUU Y (production pg schema): storage_objects.file_size la BigInt
-  // -> Prisma tra ve JS BigInt. PHAI chuan hoa Number(...) 1 lan truoc khi
-  // so sanh/tinh toan (gia tri <= 100MB nen khong mat do chinh xac).
-  const declared = Number(row.fileSize);
+  // LUU Y: storage_objects.file_size la BigInt -> PostgREST tra ve string.
+  // PHAI chuan hoa Number(...) truoc khi so sanh/tinh toan (gia tri <= 100MB
+  // nen khong mat do chinh xac).
+  const declared = Number(row.file_size);
   if (!Number.isSafeInteger(declared) || declared <= 0) {
     return fail("Metadata kích thước không hợp lệ.", 400, "bad_metadata");
   }
