@@ -1,6 +1,10 @@
 // POST /api/mangas/:id/cover/from-page — dat anh bia tu 1 trang cua truyen
+//
+// GUARD (pass 4): setMangaCover thay bia cu bang object moi thi
+// safe-delete object bia CU tren R2 — PHA HOI du lieu thuc cho du endpoint
+// dung POST -> Strict Session Guard (xac minh session truc tiep, khong cache 90s).
 import { NextRequest, NextResponse } from "next/server";
-import { ok, requireUser, parseBody, fail, withErrorHandling } from "@/lib/api";
+import { ok, requireAdminDestructive, parseBody, fail, withErrorHandling } from "@/lib/api";
 import { setCoverFromPageSchema } from "@/schemas";
 import { db } from "@/lib/db";
 import { copyObject, coverObjectKey, extFromMime } from "@/lib/r2";
@@ -12,7 +16,8 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 export const POST = withErrorHandling<Ctx>(async (req, ctx) => {
-  await requireUser(req);
+  // setMangaCover co safe-delete object bia cu tren R2 -> PHA HOI (pass 4).
+  await requireAdminDestructive(req);
   const { id: mangaId } = await ctx.params;
   const { pageId } = await parseBody(req, setCoverFromPageSchema);
 

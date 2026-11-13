@@ -15,7 +15,14 @@ export const IMAGE_MIME_TYPES = [
   "image/gif",
 ] as const;
 
-export const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB / anh
+export const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB / anh (gioi han tuyet doi)
+
+/**
+ * Gioi han upload qua proxy server (fallback). Tren Vercel, body request
+ * toi serverless function bi gioi han ~4.5MB — file lon hon PHAI upload
+ * truc tiep browser -> R2 bang presigned PUT (can CORS cho bucket).
+ */
+export const MAX_PROXY_FILE_SIZE = 4 * 1024 * 1024; // 4MB (de du phong cho Vercel 4.5MB)
 
 export const loginSchema = z.object({
   email: z.string().trim().min(1, "Vui lòng nhập email").email("Email không hợp lệ"),
@@ -149,6 +156,7 @@ export type LoginInput = z.infer<typeof loginSchema>;
 export type MangaCreateInput = z.infer<typeof mangaCreateSchema>;
 export type MangaUpdateInput = z.infer<typeof mangaUpdateSchema>;
 export type ChapterCreateInput = z.infer<typeof chapterCreateSchema>;
+export type ChapterUpdateInput = z.infer<typeof chapterUpdateSchema>;
 export type PresignInput = z.infer<typeof presignSchema>;
 export type PagesFinalizeInput = z.infer<typeof pagesFinalizeSchema>;
 export type ProgressInput = z.infer<typeof progressSchema>;

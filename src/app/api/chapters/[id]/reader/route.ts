@@ -1,7 +1,7 @@
 // GET /api/chapters/:id/reader — payload day du cho Reader
 // (pages + presigned URLs co han + prev/next + progress)
 import { NextRequest, NextResponse } from "next/server";
-import { ok, fail, requireUser, withErrorHandling } from "@/lib/api";
+import { ok, fail, requireAdmin, withErrorHandling } from "@/lib/api";
 import { getReaderPayload } from "@/services/chapter-service";
 import { db } from "@/lib/db";
 
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 export const GET = withErrorHandling<Ctx>(async (req, ctx) => {
-  const user = await requireUser(req);
+  const user = await requireAdmin(req);
   const { id } = await ctx.params;
 
   const chapter = await db.chapter.findUnique({

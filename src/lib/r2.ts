@@ -42,7 +42,9 @@ export function r2(): S3Client {
 }
 
 function bucket(): string {
-  return getEnv().r2.bucket;
+  const b = getEnv().r2.bucket;
+  if (!b) throw new Error("[r2] R2_BUCKET_NAME chưa được cấu hình trong .env");
+  return b;
 }
 
 // ---------------- Object keys ---------------------------------
@@ -107,8 +109,15 @@ export async function presignGetMany(keys: string[], expiresIn?: number): Promis
 
 // ---------------- Object operations ---------------------------
 
-export async function deleteObjects(keys: string[]): Promise<{ deleted: number; errors: string[] }> {
+export async function deleteObjects(keys: string[]): Promise<{
+  deleted: number;
+  /** Danh sach key da duoc xac nhan XOA (hoac khong ton tai — S3 delete la idempotent). */
+  deletedKeys: string[];
+  /** Key xoa that bai kem ly do. */
+  errors: string[];
+}> {
   let deleted = 0;
+  const deletedKeys: string[] = [];
   const errors: string[] = [];
   for (let i = 0; i < keys.length; i += 1000) {
     const chunk = keys.slice(i, i + 1000);
@@ -116,15 +125,20 @@ export async function deleteObjects(keys: string[]): Promise<{ deleted: number; 
     const res = await r2().send(
       new DeleteObjectsCommand({
         Bucket: bucket(),
-        Delete: { Objects: chunk.map((Key) => ({ Key })), Quiet: true },
+        Delete: { Objects: chunk.map((Key) => ({ Key })), Quiet: false },
       })
     );
+    // Quiet=false de nhan duoc danh sach key da xoa (S3 delete idempotent:
+    // key khong ton tai van duoc bao "Deleted" -> an toan de go bo metadata)
     deleted += res.Deleted?.length ?? 0;
+    for (const d of res.Deleted ?? []) {
+      if (d.Key) deletedKeys.push(d.Key);
+    }
     for (const err of res.Errors ?? []) {
       errors.push(`${err.Key}: ${err.Message ?? "unknown"}`);
     }
   }
-  return { deleted, errors };
+  return { deleted, deletedKeys, errors };
 }
 
 export async function copyObject(srcKey: string, destKey: string, contentType?: string): Promise<void> {

@@ -2,7 +2,7 @@
 // PATCH /api/chapters/:id — cap nhat chuong
 // DELETE /api/chapters/:id — xoa chuong (DB + R2 dong bo)
 import { NextRequest, NextResponse } from "next/server";
-import { ok, fail, parseBody, requireUser, withErrorHandling } from "@/lib/api";
+import { ok, fail, parseBody, requireAdmin, requireAdminMutation, requireAdminDestructive, withErrorHandling } from "@/lib/api";
 import { chapterUpdateSchema } from "@/schemas";
 import {
   updateChapter,
@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 export const GET = withErrorHandling<Ctx>(async (req, ctx) => {
-  await requireUser(req);
+  await requireAdmin(req);
   const { id } = await ctx.params;
 
   const chapter = await db.chapter.findUnique({ where: { id } });
@@ -43,7 +43,7 @@ export const GET = withErrorHandling<Ctx>(async (req, ctx) => {
 });
 
 export const PATCH = withErrorHandling<Ctx>(async (req, ctx) => {
-  await requireUser(req);
+  await requireAdminMutation(req);
   const { id } = await ctx.params;
   const input = await parseBody(req, chapterUpdateSchema);
   const chapter = await updateChapter(id, input);
@@ -51,7 +51,8 @@ export const PATCH = withErrorHandling<Ctx>(async (req, ctx) => {
 });
 
 export const DELETE = withErrorHandling<Ctx>(async (req, ctx) => {
-  await requireUser(req);
+  // Thao tac pha hoi (DB + xoa object R2) -> xac minh session truc tiep voi Supabase.
+  await requireAdminDestructive(req);
   const { id } = await ctx.params;
   const result = await deleteChapter(id);
   return ok(result);

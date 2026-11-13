@@ -30,7 +30,8 @@ export interface MangaSummaryDto {
   author: string | null;
   status: MangaStatus;
   coverImageKey: string | null;
-  coverUrl: string | null; // presigned GET — sinh tai thoi diem tra ve
+  /** presigned GET — sinh boi attachCoverUrls() tai route; optional tai tang service */
+  coverUrl?: string | null;
   genres: string[];
   chapterCount: number;
   pageCount: number;
@@ -94,7 +95,7 @@ export interface ContinueReadingItemDto {
   mangaId: string;
   mangaTitle: string;
   coverImageKey: string | null;
-  coverUrl: string | null;
+  coverUrl?: string | null;
   chapterId: string;
   chapterNumber: string;
   chapterTitle: string | null;
@@ -131,7 +132,7 @@ export interface HistoryEntryDto {
   mangaId: string;
   mangaTitle: string;
   coverImageKey: string | null;
-  coverUrl: string | null;
+  coverUrl?: string | null;
   chapterId: string;
   chapterNumber: string;
   chapterTitle: string | null;
@@ -165,6 +166,8 @@ export interface StorageStatsDto {
     createdAt: string;
   }>;
   pendingObjects: number;
+  /** Object dan dau DELETE_PENDING (xoa R2 that bai — cho retry). */
+  deletePendingObjects: number;
 }
 
 export interface OrphanAuditItemDto {

@@ -32,7 +32,7 @@ async function makePage(index: number): Promise<Buffer> {
   <rect x="30" y="30" width="740" height="1090" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="4" rx="16"/>
   <text x="400" y="540" font-family="Arial, sans-serif" font-size="200" font-weight="bold" fill="rgba(255,255,255,0.92)" text-anchor="middle">${num}</text>
   <text x="400" y="640" font-family="Arial, sans-serif" font-size="44" fill="rgba(255,255,255,0.75)" text-anchor="middle">TRANG ${num}</text>
-  <text x="400" y="1060" font-family="Arial, sans-serif" font-size="24" fill="rgba(255,255,255,0.55)" text-anchor="middle">TSUNDOKU E2E TEST</text>
+  <text x="400" y="1060" font-family="Arial, sans-serif" font-size="24" fill="rgba(255,255,255,0.55)" text-anchor="middle">MANGAREADER E2E TEST</text>
 </svg>`;
   return sharp(Buffer.from(svg)).jpeg({ quality: 85 }).toBuffer();
 }

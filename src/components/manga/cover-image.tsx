@@ -5,7 +5,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface CoverImageProps {
-  src: string | null;
+  src?: string | null;
   alt: string;
   className?: string;
   sizes?: string;

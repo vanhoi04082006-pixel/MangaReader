@@ -1,0 +1,230 @@
+# =============================================================
+# MangaReader — CI
+#
+# Cac job bat buoc (required checks tren main):
+#   1. quality      — lint + typecheck + unit tests (69)
+#   2. deps-audit   — bun audit --production --audit-level=critical
+#                     (0 critical duoc chap nhan; high backlog ghi trong
+#                     docs/MANGAREADER_LOCAL_VALIDATION_RUNBOOK.md)
+#   3. build        — dung dung Build Command cua Vercel
+#                     (db:generate:pg && build) + typecheck voi PG client
+#
+# Job tuy chon:
+#   4. integration  — 55 integration test tren real stack (Supabase + R2).
+#     Chi chay khi: repo variable ENABLE_INTEGRATION_TESTS = "true"
+#     + day du secrets STG_* (dung STAGING project, khong dung production!).
+#     Huong dan cau hinh: docs/MANGAREADER_LOCAL_VALIDATION_RUNBOOK.md
+#
+# Merge vao main chi duoc phep khi 3 job bat buoc xanh
+# (branch protection — xem runbook).
+# =============================================================
+name: CI
+
+on:
+  push:
+    branches: [main, "audit/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: "Lint & Typecheck & Unit tests"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client (SQLite dev schema)
+        run: bun run db:generate
+
+      - name: Lint (ESLint)
+        run: bun run lint
+
+      - name: Typecheck (SQLite client)
+        run: bun run typecheck
+
+      - name: Unit tests
+        run: bun test tests/unit.test.ts
+
+  deps-audit:
+    name: "bun audit (production, critical)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      # Gate: 0 critical trong production dependency tree.
+      # Hien con 9 high transitive (prisma internals, postcss/nanoid qua
+      # next+tailwind, lodash qua recharts) — theo doi trong runbook.
+      # Chay thu cong: `bun audit --production` de xem ca high.
+      - name: Audit production dependencies (fail neu co critical)
+        run: bun audit --production --audit-level=critical
+
+  build:
+    name: "Production build (PG client — dung Vercel)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      # Dung dung Build Command khai bao trong README §7 cho Vercel
+      - name: Generate Prisma client (PostgreSQL schema)
+        run: bun run db:generate:pg
+
+      - name: Typecheck (PG client — phat hien lech giua 2 schema)
+        run: bun run typecheck
+
+      - name: Dummy .env (build khong can secret that — API deu dynamic)
+        run: |
+          cat > .env <<'EOF'
+          DATABASE_URL=file:../db/custom.db
+          NEXT_PUBLIC_SUPABASE_URL=https://ci-dummy.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_dummy
+          SUPABASE_SERVICE_SECRET_KEY=sb_secret_ci_dummy
+          AUTH_PROVIDER=supabase
+          ADMIN_EMAIL=ci@example.com
+          ADMIN_USER_ID=00000000-0000-0000-0000-000000000000
+          AUTH_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          R2_ACCOUNT_ID=ci-dummy
+          R2_ACCESS_KEY_ID=ci-dummy
+          R2_SECRET_ACCESS_KEY=ci-dummy
+          R2_BUCKET_NAME=ci-dummy
+          R2_ENDPOINT=https://ci-dummy.r2.cloudflarestorage.com
+          NEXT_PUBLIC_APP_URL=http://localhost:3000
+          EOF
+
+      - name: Build (next build + standalone copy)
+        run: bun run build
+
+  # ---------------------------------------------------------------
+  # TUY CHON — integration tren real stack. DUNG STAGING PROJECT
+  # (test tao/xoa user Supabase tam, upload object that len R2,
+  #  reset bang rate_limit_hits — khong bao gio tro production).
+  # Bat: Settings > Secrets and variables > Actions >
+  #   - Variables: ENABLE_INTEGRATION_TESTS = true
+  #   - Secrets: STG_* (danh duoi)
+  # ---------------------------------------------------------------
+  integration:
+    name: "Integration (real stack — opt-in)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [quality, build]
+    if: vars.ENABLE_INTEGRATION_TESTS == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      - name: Require STG_* secrets (fail som + huong dan)
+        env:
+          STG_SUPABASE_URL: ${{ secrets.STG_SUPABASE_URL }}
+          STG_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.STG_SUPABASE_PUBLISHABLE_KEY }}
+          STG_SUPABASE_SERVICE_SECRET_KEY: ${{ secrets.STG_SUPABASE_SERVICE_SECRET_KEY }}
+          STG_ADMIN_EMAIL: ${{ secrets.STG_ADMIN_EMAIL }}
+          STG_ADMIN_PASSWORD: ${{ secrets.STG_ADMIN_PASSWORD }}
+          STG_ADMIN_USER_ID: ${{ secrets.STG_ADMIN_USER_ID }}
+          STG_R2_ACCOUNT_ID: ${{ secrets.STG_R2_ACCOUNT_ID }}
+          STG_R2_ACCESS_KEY_ID: ${{ secrets.STG_R2_ACCESS_KEY_ID }}
+          STG_R2_SECRET_ACCESS_KEY: ${{ secrets.STG_R2_SECRET_ACCESS_KEY }}
+          STG_R2_BUCKET_NAME: ${{ secrets.STG_R2_BUCKET_NAME }}
+          STG_R2_ENDPOINT: ${{ secrets.STG_R2_ENDPOINT }}
+        run: |
+          missing=0
+          for v in STG_SUPABASE_URL STG_SUPABASE_PUBLISHABLE_KEY STG_SUPABASE_SERVICE_SECRET_KEY STG_ADMIN_EMAIL STG_ADMIN_PASSWORD STG_ADMIN_USER_ID STG_R2_ACCOUNT_ID STG_R2_ACCESS_KEY_ID STG_R2_SECRET_ACCESS_KEY STG_R2_BUCKET_NAME STG_R2_ENDPOINT; do
+            if [ -z "${!v}" ]; then echo "::error::Thieu secret: $v"; missing=1; fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::ENABLE_INTEGRATION_TESTS=true nhung thieu secrets STG_*. Xem docs/MANGAREADER_LOCAL_VALIDATION_RUNBOOK.md (muc CI integration)."
+            exit 1
+          fi
+
+      - name: Generate Prisma client (SQLite) + tao DB dev
+        run: |
+          bun run db:generate
+          bun run db:push
+
+      - name: Viet .env tu staging secrets
+        env:
+          STG_SUPABASE_URL: ${{ secrets.STG_SUPABASE_URL }}
+          STG_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.STG_SUPABASE_PUBLISHABLE_KEY }}
+          STG_SUPABASE_SERVICE_SECRET_KEY: ${{ secrets.STG_SUPABASE_SERVICE_SECRET_KEY }}
+          STG_ADMIN_EMAIL: ${{ secrets.STG_ADMIN_EMAIL }}
+          STG_ADMIN_PASSWORD: ${{ secrets.STG_ADMIN_PASSWORD }}
+          STG_ADMIN_USER_ID: ${{ secrets.STG_ADMIN_USER_ID }}
+          STG_R2_ACCOUNT_ID: ${{ secrets.STG_R2_ACCOUNT_ID }}
+          STG_R2_ACCESS_KEY_ID: ${{ secrets.STG_R2_ACCESS_KEY_ID }}
+          STG_R2_SECRET_ACCESS_KEY: ${{ secrets.STG_R2_SECRET_ACCESS_KEY }}
+          STG_R2_BUCKET_NAME: ${{ secrets.STG_R2_BUCKET_NAME }}
+          STG_R2_ENDPOINT: ${{ secrets.STG_R2_ENDPOINT }}
+        run: |
+          cat > .env <<EOF
+          DATABASE_URL=file:../db/custom.db
+          AUTH_PROVIDER=supabase
+          NEXT_PUBLIC_SUPABASE_URL=$STG_SUPABASE_URL
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$STG_SUPABASE_PUBLISHABLE_KEY
+          SUPABASE_SERVICE_SECRET_KEY=$STG_SUPABASE_SERVICE_SECRET_KEY
+          ADMIN_EMAIL=$STG_ADMIN_EMAIL
+          ADMIN_PASSWORD=$STG_ADMIN_PASSWORD
+          ADMIN_USER_ID=$STG_ADMIN_USER_ID
+          AUTH_SECRET=ci-$(openssl rand -hex 32)
+          R2_ACCOUNT_ID=$STG_R2_ACCOUNT_ID
+          R2_ACCESS_KEY_ID=$STG_R2_ACCESS_KEY_ID
+          R2_SECRET_ACCESS_KEY=$STG_R2_SECRET_ACCESS_KEY
+          R2_BUCKET_NAME=$STG_R2_BUCKET_NAME
+          R2_ENDPOINT=$STG_R2_ENDPOINT
+          NEXT_PUBLIC_APP_URL=http://localhost:3000
+          EOF
+          echo ".env written ($(grep -c '=' .env) vars)"
+
+      - name: Khoi dong dev server
+        run: |
+          nohup bun run dev > /dev/null 2>&1 &
+          for i in $(seq 1 90); do
+            sleep 2
+            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "Dev server UP sau ~$((i*2))s"; exit 0
+            fi
+          done
+          echo "::error::Dev server khong len sau 180s"; tail -n 80 dev.log; exit 1
+
+      - name: Integration tests (55)
+        run: bun test tests/integration.test.ts
+
+      - name: Dev server log (neu fail)
+        if: failure()
+        run: tail -n 200 dev.log || true

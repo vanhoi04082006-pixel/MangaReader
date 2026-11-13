@@ -8,9 +8,24 @@ import { ApiError } from "@/lib/api";
 import { deleteObjects } from "@/lib/r2";
 import { ensureGenres } from "@/services/genre-service";
 import { ensureProfile } from "@/services/profile-service";
+import { safeDeleteObjects, removeMetadataIfDeleted } from "@/services/storage-service";
 import type { MangaCreateInput, MangaUpdateInput, MangaStatus } from "@/schemas";
 import type { MangaSummaryDto, MangaDetailDto, Paginated } from "@/types";
 import { naturalCompare } from "@/utils/natural-sort";
+
+/**
+ * Filter contains tuong thich SQLite/PostgreSQL:
+ * - SQLite: LIKE mac dinh case-insensitive (ASCII) -> contains thuan
+ * - PostgreSQL: LIKE case-SENSITIVE -> them mode: "insensitive"
+ * (cast an toan: key `mode` chi ton tai tren client PG)
+ */
+function textContains(value: string): { contains: string } {
+  const isPostgres = (process.env.DATABASE_URL ?? "").startsWith("postgres");
+  if (isPostgres) {
+    return { contains: value, mode: "insensitive" } as unknown as { contains: string };
+  }
+  return { contains: value };
+}
 
 interface ListParams {
   userId: string;
@@ -92,10 +107,9 @@ export async function listMangas(params: ListParams): Promise<Paginated<MangaSum
     ...(params.search
       ? {
           OR: [
-            // SQLite LIKE da case-insensitive cho ASCII
-            { title: { contains: params.search } },
-            { alternativeTitles: { contains: params.search } },
-            { author: { contains: params.search } },
+            { title: textContains(params.search) },
+            { alternativeTitles: textContains(params.search) },
+            { author: textContains(params.search) },
           ],
         }
       : {}),
@@ -111,7 +125,7 @@ export async function listMangas(params: ListParams): Promise<Paginated<MangaSum
     const [allMangas, progressRows] = await Promise.all([
       db.manga.findMany({ where, select: { id: true, title: true } }),
       db.readingProgress.findMany({
-        where: { userId, mangaId: { in: (await db.manga.findMany({ where, select: { id: true } })).map((m) => m.id) } },
+        where: { userId: params.userId, mangaId: { in: (await db.manga.findMany({ where, select: { id: true } })).map((m) => m.id) } },
         select: { mangaId: true, updatedAt: true },
       }),
     ]);
@@ -179,7 +193,7 @@ export async function getMangaDetail(mangaId: string, userId: string): Promise<M
     description: manga.description,
     artist: manga.artist,
     publicationYear: manga.publicationYear,
-    sizeBytes: sizeAgg._sum.fileSize ?? 0,
+    sizeBytes: Number(sizeAgg._sum.fileSize ?? 0),
   };
 }
 
@@ -226,7 +240,16 @@ export async function updateManga(mangaId: string, input: MangaUpdateInput) {
   return db.manga.update({ where: { id: mangaId }, data });
 }
 
-/** Xoa truyen + toan bo chuong/trang + object tren R2 (dong bo) */
+/**
+ * Xoa truyen + toan bo chuong/trang + object tren R2.
+ * TOAN VEN DU LIEU (idempotent, recoverable):
+ * 1) Mark toan bo StorageObject lien quan -> DELETE_PENDING
+ * 2) Xoa DB (cascade chapters/pages/progress/history/favorites/genres;
+ *    storageObject FK set null -> row van giu objectKey de retry)
+ * 3) Xoa R2 (safe delete)
+ * 4) Chi go metadata khi R2 xac nhan xoa. That bai -> DELETE_PENDING,
+ *    cleanup route retry sau (audit van thay orphan cho toi khi xoa xong).
+ */
 export async function deleteManga(mangaId: string) {
   const manga = await db.manga.findUnique({
     where: { id: mangaId },
@@ -249,22 +272,34 @@ export async function deleteManga(mangaId: string) {
     ...storageRows.map((s) => s.objectKey),
   ]);
   if (manga.coverImageKey) keys.add(manga.coverImageKey);
-
-  // 1) Xoa DB truoc (cascade chapters/pages/progress/history/favorites/genres)
-  await db.manga.delete({ where: { id: mangaId } });
-
-  // 2) Xoa object tren R2 (best-effort; neu loi se con lai orphan -> audit phat hien)
   const keyList = Array.from(keys);
-  try {
-    await deleteObjects(keyList);
-  } catch (err) {
-    console.error("[manga-service] R2 delete failed, objects remain as orphans:", err);
+
+  // 1) Mark DELETE_PENDING
+  if (keyList.length > 0) {
+    await db.storageObject.updateMany({
+      where: { objectKey: { in: keyList }, status: { in: ["PENDING", "CONFIRMED"] } },
+      data: { status: "DELETE_PENDING" },
+    });
   }
 
-  // 3) Xoa metadata StorageObject
-  await db.storageObject.deleteMany({ where: { objectKey: { in: keyList } } }).catch(() => undefined);
+  // 2) Xoa DB truoc (cascade chapters/pages/progress/history/favorites/genres)
+  await db.manga.delete({ where: { id: mangaId } });
 
-  return { deleted: true, objectsRemoved: keyList.length };
+  // 3) Xoa object tren R2 + 4) chi go metadata khi xac nhan xoa
+  let removedCount = 0;
+  let retryNeeded = 0;
+  if (keyList.length > 0) {
+    const result = await safeDeleteObjects(keyList);
+    removedCount = await removeMetadataIfDeleted(result.removed);
+    retryNeeded = result.pending.length;
+    if (retryNeeded > 0) {
+      console.warn(
+        `[manga-service] ${retryNeeded} object xoa R2 that bai — giu DELETE_PENDING, cleanup se retry.`
+      );
+    }
+  }
+
+  return { deleted: true, objectsRemoved: removedCount, objectsPendingRetry: retryNeeded };
 }
 
 export async function toggleFavorite(userId: string, mangaId: string) {
@@ -283,7 +318,7 @@ export async function toggleFavorite(userId: string, mangaId: string) {
   return { favorited: true };
 }
 
-/** Cap nhat coverImageKey + doi che do bia cu sang object moi */
+/** Cap nhat coverImageKey + doi che do bia cu sang object moi (safe delete) */
 export async function setMangaCover(mangaId: string, newKey: string | null) {
   const manga = await db.manga.findUnique({ where: { id: mangaId }, select: { coverImageKey: true } });
   if (!manga) throw new ApiError("Không tìm thấy truyện.", 404, "not_found");
@@ -295,12 +330,15 @@ export async function setMangaCover(mangaId: string, newKey: string | null) {
     // kiem tra key cu con duoc tham chieu boi trang nao khong
     const stillUsed = await db.page.findFirst({ where: { objectKey: oldKey }, select: { id: true } });
     if (!stillUsed) {
-      try {
-        await deleteObjects([oldKey]);
-        await db.storageObject.deleteMany({ where: { objectKey: oldKey } }).catch(() => undefined);
-      } catch (err) {
-        console.error("[manga-service] old cover cleanup failed:", err);
-      }
+      // Mark DELETE_PENDING -> safe delete -> chi go metadata khi xac nhan xoa
+      await db.storageObject
+        .updateMany({
+          where: { objectKey: oldKey, status: { in: ["PENDING", "CONFIRMED"] } },
+          data: { status: "DELETE_PENDING" },
+        })
+        .catch(() => undefined);
+      const result = await safeDeleteObjects([oldKey]);
+      await removeMetadataIfDeleted(result.removed).catch(() => undefined);
     }
   }
   return { coverImageKey: newKey };
