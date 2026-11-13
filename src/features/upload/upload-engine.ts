@@ -11,7 +11,7 @@
 
 "use client";
 
-import { api, putToR2, uploadViaProxy } from "@/lib/client/api";
+import { api, putToR2, uploadViaProxy, ApiClientError } from "@/lib/client/api";
 import { MAX_PROXY_FILE_SIZE } from "@/schemas";
 import type { PresignResponseDto } from "@/types";
 
@@ -75,6 +75,8 @@ export class UploadEngine {
       chapterId: string;
       onItemChange: (id: string, patch: Partial<PageItem>) => void;
       onProgress: (p: UploadProgress) => void;
+      /** Hook tùy chọn: báo lỗi kèm HTTP status (batch import dùng để nhận diện 429) */
+      onItemError?: (id: string, status: number | null) => void;
     }
   ) {}
 
@@ -211,6 +213,7 @@ export class UploadEngine {
       this.counts.failed += 1;
       const msg = err instanceof Error ? err.message : "Lỗi không xác định";
       this.opts.onItemChange(item.id, { status: "error", error: msg });
+      this.opts.onItemError?.(item.id, err instanceof ApiClientError ? err.status : null);
     } finally {
       this.emit();
     }
