@@ -1,0 +1,20 @@
+{
+  "name": "MangaReader — Thư viện truyện cá nhân",
+  "short_name": "MangaReader",
+  "description": "Thư viện truyện tranh cá nhân với Cloudflare R2 — upload, quản lý và đọc truyện mọi lúc mọi nơi.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "lang": "vi",
+  "dir": "ltr",
+  "background_color": "#18120f",
+  "theme_color": "#18120f",
+  "categories": ["books", "entertainment"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

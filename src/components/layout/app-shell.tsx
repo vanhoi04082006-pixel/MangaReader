@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -39,7 +38,11 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
       {NAV_ITEMS.map((item) => {
         const active = item.match(activeSeg);
         return (
-          <Link
+          // <a> thuan (KHONG phai next/link): anchor href="#/..." la dieu
+          // huong mac dinh cua browser -> fire "hashchange" ngay lap tuc.
+          // Next <Link> chi goi history.pushState va khong fire event nao,
+          // lam UI khong chuyen tab (phai F5).
+          <a
             key={item.href}
             href={`#${item.href}`}
             onClick={onNavigate}
@@ -59,7 +62,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
             )}
             <item.icon className={cn("relative z-10 h-4.5 w-4.5", active && "text-primary")} />
             <span className="relative z-10">{item.label}</span>
-          </Link>
+          </a>
         );
       })}
     </nav>
@@ -75,7 +78,7 @@ function StorageMini() {
   if (!data) return null;
   const percent = data.storageQuotaBytes > 0 ? data.storageUsedBytes / data.storageQuotaBytes : 0;
   return (
-    <Link
+    <a
       href="#/storage"
       className="mx-3 mb-2 block rounded-lg border border-sidebar-border bg-background/40 p-3 transition-colors hover:border-primary/40"
     >
@@ -97,7 +100,7 @@ function StorageMini() {
       <p className="mt-1.5 text-[11px] text-muted-foreground">
         trên {formatBytes(data.storageQuotaBytes, { decimals: 0 })}
       </p>
-    </Link>
+    </a>
   );
 }
 
@@ -149,7 +152,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             Hệ thống
           </p>
           <nav className="flex flex-col gap-1 px-3">
-            <Link
+            <a
               href="#/settings"
               onClick={onNavigate}
               className={cn(
@@ -159,7 +162,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             >
               <Settings className="h-4.5 w-4.5" />
               Cài đặt
-            </Link>
+            </a>
           </nav>
         </div>
         <div className="mt-6">
@@ -188,7 +191,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="flex min-h-screen flex-col md:pl-60">
         <Header onMenuClick={() => setMobileOpen(true)} />
-        <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 pb-16 pt-4 md:px-8 md:pt-6">
+        <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 pb-[calc(4rem_+_env(safe-area-inset-bottom,0px))] pt-4 md:px-8 md:pt-6">
           {children}
         </main>
       </div>

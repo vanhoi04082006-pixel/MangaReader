@@ -60,7 +60,7 @@ export function Header({ onMenuClick }: { onMenuClick?: () => void }) {
   }, []);
 
   return (
-    <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur-md">
+    <header className="sticky top-0 z-20 border-b bg-background/80 pt-[env(safe-area-inset-top,0px)] backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-[1440px] items-center gap-2 px-4 md:gap-3 md:px-8">
         <Button
           variant="ghost"
