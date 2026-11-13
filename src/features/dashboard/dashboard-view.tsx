@@ -96,21 +96,29 @@ export function DashboardView() {
     <div className="space-y-7 sm:space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">
+          <h1 className="text-2xl font-extrabold tracking-tight text-glow">
             {greeting()}
-            {name ? <span className="text-primary"> {name}</span> : null}
+            {name ? <span className="text-primary"> {name}</span> : <span className="text-primary">!</span>}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">Tổng quan thư viện truyện của bạn</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => navigate("/library")}>
-            <LibraryBig className="h-4 w-4" />
-            Thư viện
-          </Button>
-          <Button size="sm" className="gap-2" onClick={() => navigate("/upload")}>
-            <Plus className="h-4 w-4" />
-            Thêm truyện
-          </Button>
+        <div className="flex items-center gap-3">
+          <img
+            src="/mascots/back.png"
+            alt=""
+            aria-hidden
+            className="hidden h-16 w-auto select-none lg:block"
+          />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => navigate("/library")}>
+              <LibraryBig className="h-4 w-4" />
+              Thư viện
+            </Button>
+            <Button size="sm" className="gap-2 glow-primary" onClick={() => navigate("/upload")}>
+              <Plus className="h-4 w-4" />
+              Thêm truyện
+            </Button>
+          </div>
         </div>
       </div>
 

@@ -11,14 +11,15 @@
 //
 // Cap nhat SW: doi VERSION -> activate tu xoa cache cu (suffix khac).
 // =============================================================
-const VERSION = "v1";
+const VERSION = "v2";
 const SHELL_CACHE = `mr-shell-${VERSION}`;
 const STATIC_CACHE = `mr-static-${VERSION}`;
 const SHELL_URLS = [
   "/",
   "/manifest.webmanifest",
   "/logo.svg",
-  "/placeholder-cover.png",
+  "/placeholder-cover.svg",
+  "/favicon.ico",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/icon-maskable-512.png",

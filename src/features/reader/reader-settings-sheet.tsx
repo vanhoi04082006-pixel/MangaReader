@@ -155,9 +155,9 @@ export function ReaderSettingsSheet({ open, onOpenChange }: SettingsSheetProps) 
             <div className="grid grid-cols-3 gap-1.5 rounded-lg bg-muted p-1">
               {(
                 [
-                  { value: "dark", label: "Tối", className: "bg-zinc-800" },
+                  { value: "dark", label: "Tối", className: "bg-[oklch(0.21_0.03_300)]" },
                   { value: "black", label: "Đen", className: "bg-black" },
-                  { value: "light", label: "Sáng", className: "bg-zinc-100" },
+                  { value: "light", label: "Sáng", className: "bg-[oklch(0.96_0.006_310)]" },
                 ] as const
               ).map((opt) => (
                 <button

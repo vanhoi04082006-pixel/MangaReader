@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import {
-  BookOpen,
   LayoutGrid,
   List,
   Plus,
@@ -282,7 +281,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
         )
       ) : data && data.items.length === 0 ? (
         <EmptyState
-          icon={BookOpen}
+          mascot={activeFilterCount > 0 ? "curious" : favoritesOnly ? "shy" : "sitting"}
           title={
             activeFilterCount > 0
               ? "Không có truyện khớp bộ lọc"

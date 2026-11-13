@@ -1,7 +1,7 @@
 {
-  "name": "MangaReader — Thư viện truyện cá nhân",
-  "short_name": "MangaReader",
-  "description": "Thư viện truyện tranh cá nhân với Cloudflare R2 — upload, quản lý và đọc truyện mọi lúc mọi nơi.",
+  "name": "Tsundoku — Thư viện truyện cá nhân",
+  "short_name": "Tsundoku",
+  "description": "Tsundoku — Personal Manga Reader. Thư viện truyện tranh cá nhân: nhập truyện hàng loạt từ thư mục, quản lý và đọc truyện mọi lúc mọi nơi.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
@@ -9,12 +9,13 @@
   "orientation": "any",
   "lang": "vi",
   "dir": "ltr",
-  "background_color": "#18120f",
-  "theme_color": "#18120f",
+  "background_color": "#150c22",
+  "theme_color": "#150c22",
   "categories": ["books", "entertainment"],
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
     { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

@@ -422,7 +422,7 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
           </>
         ) : (
           <EmptyState
-            icon={Layers}
+            mascot="book"
             title="Chưa có chương nào"
             description="Dùng tính năng nhập từ thư mục để thêm toàn bộ chương cùng lúc."
             action={
