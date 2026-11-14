@@ -46,10 +46,18 @@ import { formatBytes, formatNumber } from "@/utils/format";
 import { STATUS_LABELS } from "@/components/manga/manga-card";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import type { ChapterDto, MangaSummaryDto, Paginated } from "@/types";
+import type {
+  ChapterDto,
+  DuplicateMatchDto,
+  GenreDto,
+  MangaDetailDto,
+  PageDto,
+  Paginated,
+} from "@/types";
 import { UploadEngine, type PageItem } from "@/features/upload/upload-engine";
 import { uploadCoverToR2 } from "@/features/upload/cover-upload";
 import {
+  assignChapterNumbers,
   buildMangasFromFiles,
   filesFromDataTransfer,
   fromInputFiles,
@@ -86,13 +94,13 @@ function baseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-function toPageItems(files: File[]): PageItem[] {
-  return files.map((f, i) => ({
+function toPageItems(entries: Array<{ file: File; pageNumber: number }>): PageItem[] {
+  return entries.map(({ file: f, pageNumber }) => ({
     id: uid(),
     name: baseName(f.name).slice(0, 255) || f.name.slice(0, 255),
     size: f.size,
     mimeType: mimeFromFile(f) ?? "application/octet-stream",
-    pageNumber: i + 1,
+    pageNumber,
     status: "pending" as const,
     width: null,
     height: null,
@@ -100,25 +108,71 @@ function toPageItems(files: File[]): PageItem[] {
   }));
 }
 
-/** So sánh tên truyện "gần đúng" để bỏ qua truyện đã có */
-function normalizeTitleForMatch(s: string): string {
-  return s.trim().toLowerCase().replace(/\s+/g, " ");
+/**
+ * Tìm truyện đã có trong thư viện: ưu tiên trùng "Nguồn" (sourceUrl), sau đó
+ * trùng tên / tên khác (server chuẩn hoá bỏ dấu). Trả chi tiết để đồng bộ.
+ */
+async function findExistingManga(manga: ParsedManga): Promise<MangaDetailDto | null> {
+  const params = new URLSearchParams({ title: manga.title });
+  if (manga.meta.sourceUrl) params.set("sourceUrl", manga.meta.sourceUrl);
+  const res = await api.get<{ matches: DuplicateMatchDto[]; isDuplicate: boolean }>(
+    `/api/mangas/check-duplicate?${params.toString()}`
+  );
+  if (!res.isDuplicate || res.matches.length === 0) return null;
+  const match =
+    res.matches.find((m) => m.by === "sourceUrl") ??
+    res.matches.find((m) => m.by === "title") ??
+    res.matches[0];
+  return api.get<MangaDetailDto>(`/api/mangas/${match.id}`);
 }
 
-/** Lấy toàn bộ tên truyện hiện có (phân trang, tối đa 3000) */
-async function fetchExistingTitles(): Promise<Set<string>> {
-  const titles = new Set<string>();
-  const pageSize = 60; // max theo schema
-  let page = 1;
-  for (let i = 0; i < 50; i++) {
-    const res = await api.get<Paginated<MangaSummaryDto>>(
-      `/api/mangas?page=${page}&pageSize=${pageSize}&sort=title&order=asc`
-    );
-    for (const m of res.items) titles.add(normalizeTitleForMatch(m.title));
-    if (page >= (res.totalPages ?? 1)) break;
-    page++;
+/**
+ * Bổ sung thông tin còn THIẾU của truyện đã có (không ghi đè dữ liệu đang có):
+ * tên khác, tác giả, mô tả, nguồn, thể loại (hợp nhất). Trả danh sách mục đã cập nhật.
+ */
+async function syncMangaInfo(
+  detail: MangaDetailDto,
+  manga: ParsedManga,
+  genres: string[]
+): Promise<string[]> {
+  const patch: Record<string, unknown> = {};
+  const notes: string[] = [];
+
+  if (!detail.alternativeTitles?.trim() && manga.meta.alternativeTitles) {
+    patch.alternativeTitles = manga.meta.alternativeTitles;
+    notes.push("tên khác");
   }
-  return titles;
+  if (!detail.author?.trim() && manga.meta.author) {
+    patch.author = manga.meta.author;
+    notes.push("tác giả");
+  }
+  if (!detail.description?.trim() && manga.meta.description) {
+    patch.description = manga.meta.description;
+    notes.push("mô tả");
+  }
+  if (!detail.sourceUrl?.trim() && manga.meta.sourceUrl) {
+    patch.sourceUrl = manga.meta.sourceUrl;
+    notes.push("nguồn");
+  }
+
+  const have = new Set(detail.genres.map((g) => g.toLowerCase()));
+  const missing = genres.filter((g) => !have.has(g.toLowerCase()));
+  if (missing.length > 0) {
+    const merged = [...detail.genres];
+    for (const g of missing) {
+      if (merged.length >= 20) break;
+      merged.push(g);
+    }
+    if (merged.length > detail.genres.length) {
+      patch.genres = merged;
+      notes.push(`${merged.length - detail.genres.length} thể loại`);
+    }
+  }
+
+  if (Object.keys(patch).length > 0) {
+    await api.patch(`/api/mangas/${detail.id}`, patch);
+  }
+  return notes;
 }
 
 class CancelledError extends Error {
@@ -155,6 +209,10 @@ interface MangaImportState {
   error?: string;
   /** cảnh báo không chặn import (bìa lỗi...) */
   notices?: string[];
+  /** truyện đã có trong thư viện — import đang bổ sung phần thiếu */
+  reused?: boolean;
+  /** tóm tắt phần đã bổ sung khi đồng bộ truyện đã có */
+  summary?: string;
 }
 
 // ---------------- Ảnh bìa preview ----------------
@@ -295,7 +353,7 @@ function MangaParseCard({
           {state?.status === "done" && (
             <p className="mt-2 flex items-center gap-1 text-[11px] font-medium text-emerald-500">
               <CheckCircle2 className="h-3.5 w-3.5" />
-              Đã nhập {state.chaptersDone} chương
+              {state.reused ? "Đã đồng bộ" : "Đã nhập"} {state.chaptersDone} chương
               {state.mangaId && (
                 <button
                   className="ml-1 text-primary underline-offset-2 hover:underline"
@@ -305,6 +363,9 @@ function MangaParseCard({
                 </button>
               )}
             </p>
+          )}
+          {state?.summary && (
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{state.summary}</p>
           )}
           {state?.status === "skipped" && (
             <p className="mt-2 text-[11px] font-medium text-amber-500">
@@ -400,7 +461,7 @@ export function BatchImportTab() {
   const [parsing, setParsing] = useState(false);
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
   const [dragOver, setDragOver] = useState(false);
-  const [skipExisting, setSkipExisting] = useState(true);
+  const [syncExisting, setSyncExisting] = useState(true);
 
   // Trạng thái import
   const [importing, setImporting] = useState(false);
@@ -573,36 +634,48 @@ export function BatchImportTab() {
     }
   };
 
-  // ---------------- Tạo chương (xử lý trùng 409) ----------------
+  // ---------------- Tạo/tìm chương (xử lý trùng 409) ----------------
 
-  const createChapterSafe = async (
+  const findChapterByNumber = async (
+    mangaId: string,
+    chapterNumber: string
+  ): Promise<ChapterDto | null> => {
+    let page = 1;
+    while (true) {
+      const list = await api.get<Paginated<ChapterDto>>(
+        `/api/mangas/${mangaId}/chapters?sort=asc&page=${page}&pageSize=200`
+      );
+      const found = list.items.find((c) => c.chapterNumber === chapterNumber);
+      if (found) return found;
+      if (page >= (list.totalPages ?? 1)) return null;
+      page++;
+    }
+  };
+
+  /** Tạo chương mới; nếu đã tồn tại (409) thì trả chương hiện có kèm pageCount. */
+  const ensureChapter = async (
     mangaId: string,
     chapterNumber: string,
     title: string | null
-  ): Promise<{ id: string; skipped: boolean }> => {
+  ): Promise<{
+    id: string;
+    chapterNumber: string;
+    title: string | null;
+    pageCount: number;
+    created: boolean;
+  }> => {
     try {
-      const created = await api.post<{ id: string }>(`/api/mangas/${mangaId}/chapters`, {
-        chapterNumber,
-        title,
-      });
-      return { id: created.id, skipped: false };
+      const created = await api.post<{
+        id: string;
+        chapterNumber: string;
+        title: string | null;
+        pageCount: number;
+      }>(`/api/mangas/${mangaId}/chapters`, { chapterNumber, title });
+      return { ...created, created: true };
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 409) {
-        // Chương đã tồn tại (import lại sau lỗi) — tái dùng nếu rỗng
-        const list = await api.get<Paginated<ChapterDto>>(
-          `/api/mangas/${mangaId}/chapters?sort=asc&page=1&pageSize=200`
-        );
-        let existing = list.items.find((c) => c.chapterNumber === chapterNumber);
-        // tìm tiếp ở các trang sau nếu chưa thấy
-        for (let p = 2; existing === undefined && p <= (list.totalPages ?? 1); p++) {
-          const more = await api.get<Paginated<ChapterDto>>(
-            `/api/mangas/${mangaId}/chapters?sort=asc&page=${p}&pageSize=200`
-          );
-          existing = more.items.find((c) => c.chapterNumber === chapterNumber);
-        }
-        if (!existing) throw err;
-        if (existing.pageCount > 0) return { id: existing.id, skipped: true };
-        return { id: existing.id, skipped: false };
+        const existing = await findChapterByNumber(mangaId, chapterNumber);
+        if (existing) return { ...existing, created: false };
       }
       throw err;
     }
@@ -610,11 +683,43 @@ export function BatchImportTab() {
 
   // ---------------- Import flow chính ----------------
 
+  /**
+   * Chuẩn hoá thể loại theo đúng tên đang có trong DB (không phân biệt hoa
+   * thường/dấu). Thể loại không khớp 223 mục hiện có sẽ bị bỏ — tránh tạo mới.
+   * Trả map manga.id → danh sách thể loại đã chuẩn hoá.
+   */
+  const canonicalizeGenres = async (): Promise<Map<string, string[]>> => {
+    const result = new Map<string, string[]>();
+    let byLower: Map<string, string>;
+    try {
+      const { genres } = await api.get<{ genres: GenreDto[] }>("/api/genres");
+      if (!Array.isArray(genres) || genres.length === 0) {
+        toast.warning("Danh sách thể loại trống — giữ nguyên thể loại từ info.txt.");
+        return result;
+      }
+      byLower = new Map(genres.map((g) => [g.name.toLowerCase(), g.name]));
+    } catch {
+      toast.warning("Không tải được danh sách thể loại — giữ nguyên thể loại từ info.txt.");
+      return result;
+    }
+    let dropped = 0;
+    for (const m of mangas) {
+      const canonical = m.meta.genres
+        .map((g) => byLower.get(g.trim().toLowerCase()))
+        .filter((g): g is string => Boolean(g));
+      dropped += m.meta.genres.length - canonical.length;
+      result.set(m.id, canonical);
+    }
+    if (dropped > 0) toast.warning(`Đã bỏ ${dropped} thể loại không có trong thư viện.`);
+    return result;
+  };
+
   const startImport = async () => {
     if (mangas.length === 0 || importing) return;
     setImporting(true);
     setFinished(false);
     cancelledRef.current = false;
+    const genreOverride = await canonicalizeGenres();
 
     const states: Record<string, MangaImportState> = {};
     for (const m of mangas) {
@@ -623,19 +728,16 @@ export function BatchImportTab() {
       states[m.id] =
         prev && (prev.status === "done" || prev.status === "skipped")
           ? prev
-          : { status: "pending", chaptersDone: 0, chaptersTotal: m.chapters.length };
+          : {
+              status: "pending",
+              chaptersDone: 0,
+              chaptersTotal: m.chapters.length,
+              // giữ truyện đã tạo/tái dùng từ lần chạy trước khi thử lại
+              mangaId: prev?.mangaId,
+              reused: prev?.reused,
+            };
     }
     setImportStates({ ...states });
-
-    // Danh sách tên truyện đã có — để bỏ qua trùng (trừ truyện đã tạo trong phiên này)
-    let existingTitles: Set<string> | null = null;
-    if (skipExisting) {
-      try {
-        existingTitles = await fetchExistingTitles();
-      } catch {
-        toast.warning("Không lấy được thư viện hiện tại — bỏ qua bước kiểm tra trùng.");
-      }
-    }
 
     try {
       for (const manga of mangas) {
@@ -645,17 +747,42 @@ export function BatchImportTab() {
           patchState(states, manga.id, { status: "cancelled" });
           continue;
         }
-        if (existingTitles && !st.mangaId && existingTitles.has(normalizeTitleForMatch(manga.title))) {
-          patchState(states, manga.id, { status: "skipped" });
-          continue;
-        }
 
         patchState(states, manga.id, { status: "importing", phase: "creating", currentChapter: undefined });
         const notices: string[] = [];
+        const updates: string[] = [];
+        const genres = genreOverride.get(manga.id) ?? manga.meta.genres;
+        let pagesAdded = 0;
+        let chaptersAdded = 0;
 
         try {
-          // 1. Tạo truyện (hoặc tái dùng nếu đã tạo ở lần thử trước)
+          // 1. Truyện: tái dùng bản đã có + bổ sung thông tin thiếu, hoặc tạo mới
           let mangaId = st.mangaId;
+          let reused = !!st.reused;
+          let existing: MangaDetailDto | null = null;
+
+          if (mangaId) {
+            // Tiếp tục một truyện đã tạo/đã có từ lần chạy trước
+            existing = await api.get<MangaDetailDto>(`/api/mangas/${mangaId}`).catch(() => null);
+            if (existing) {
+              const infoNotes = await syncMangaInfo(existing, manga, genres);
+              if (infoNotes.length > 0) updates.push(`thông tin (${infoNotes.join(", ")})`);
+            }
+          } else {
+            const found = await findExistingManga(manga);
+            if (found) {
+              if (!syncExisting) {
+                patchState(states, manga.id, { status: "skipped", mangaId: found.id });
+                continue;
+              }
+              existing = found;
+              mangaId = found.id;
+              reused = true;
+              const infoNotes = await syncMangaInfo(found, manga, genres);
+              if (infoNotes.length > 0) updates.push(`thông tin (${infoNotes.join(", ")})`);
+            }
+          }
+
           if (!mangaId) {
             const created = await api.post<{ id: string }>("/api/mangas", {
               title: manga.title,
@@ -663,51 +790,64 @@ export function BatchImportTab() {
               author: manga.meta.author,
               status: manga.meta.status,
               description: manga.meta.description,
-              genres: manga.meta.genres,
+              genres: genres,
+              sourceUrl: manga.meta.sourceUrl,
             });
             mangaId = created.id;
           }
-          patchState(states, manga.id, { mangaId });
+          patchState(states, manga.id, { mangaId, reused });
 
-          // 2. Ảnh bìa (best-effort — lỗi không chặn chương)
-          if (manga.coverFile) {
+          // 2. Ảnh bìa — chỉ tải khi truyện CHƯA có bìa
+          const hasCover = Boolean(existing?.coverImageKey);
+          if (manga.coverFile && !hasCover) {
             patchState(states, manga.id, { phase: "cover" });
             try {
               await uploadCoverToR2(mangaId, manga.coverFile);
+              if (reused) updates.push("bìa");
             } catch (err) {
               if (cancelledRef.current) throw new CancelledError();
               notices.push(
                 `Ảnh bìa lỗi: ${err instanceof Error ? err.message : "không rõ lý do"}`
               );
             }
+          } else if (reused && !hasCover) {
+            notices.push("Truyện chưa có ảnh bìa và thư mục cũng không có bìa.");
           }
 
-          // 3. Từng chương
+          // 3. Từng chương — chương nào thiếu thì tạo, trang nào thiếu thì upload
           let chaptersDone = st.chaptersDone ?? 0;
+          const chapterNumbers = assignChapterNumbers(manga.chapters);
           for (let i = 0; i < manga.chapters.length; i++) {
             if (cancelledRef.current) break;
             const ch = manga.chapters[i];
-            const doneKey = `${manga.id}:${ch.number}`;
+            const chapterNumber = chapterNumbers[i];
+            const doneKey = `${manga.id}:${chapterNumber}`;
 
             if (doneChaptersRef.current.has(doneKey)) {
               // đã xong ở lần thử trước (theo dõi trong phiên)
+              chaptersDone += 1;
+              patchState(states, manga.id, { chaptersDone });
               continue;
             }
 
             patchState(states, manga.id, {
               phase: "chapters",
-              currentChapter: `Đang upload: ${ch.name} (${chaptersDone}/${manga.chapters.length} chương)`,
+              currentChapter: `Đang xử lý: ${ch.name} (${chaptersDone}/${manga.chapters.length} chương)`,
             });
             const setWaitNotice = (msg: string | null) =>
               patchState(states, manga.id, {
                 phase: msg ? "waiting" : "chapters",
-                currentChapter: msg ?? `Đang upload: ${ch.name} (${chaptersDone}/${manga.chapters.length} chương)`,
+                currentChapter:
+                  msg ?? `Đang xử lý: ${ch.name} (${chaptersDone}/${manga.chapters.length} chương)`,
               });
 
-            // Lọc file hợp lệ
-            const valid = ch.files.filter(
-              (f) => mimeFromFile(f) !== null && f.size > 0 && f.size <= MAX_FILE_BYTES
-            );
+            // Lọc file hợp lệ — giữ số trang theo đúng thứ tự ảnh trong thư mục
+            const valid: Array<{ file: File; pageNumber: number }> = [];
+            ch.files.forEach((f, idx) => {
+              if (mimeFromFile(f) !== null && f.size > 0 && f.size <= MAX_FILE_BYTES) {
+                valid.push({ file: f, pageNumber: idx + 1 });
+              }
+            });
             if (valid.length < ch.files.length) {
               notices.push(
                 `Chương "${ch.name}": bỏ qua ${ch.files.length - valid.length} ảnh không hợp lệ`
@@ -715,56 +855,82 @@ export function BatchImportTab() {
             }
             if (valid.length === 0) {
               notices.push(`Chương "${ch.name}" không có ảnh hợp lệ — bỏ qua`);
-              continue;
-            }
-
-            const chapterRes = await createChapterSafe(
-              mangaId,
-              ch.number,
-              ch.name !== ch.number ? ch.name : null
-            );
-            if (chapterRes.skipped) {
-              // chương đã có trang (lần import trước) — ghi nhận và đi tiếp
               chaptersDone += 1;
-              doneChaptersRef.current.add(doneKey);
               patchState(states, manga.id, { chaptersDone });
               continue;
             }
 
-            const items = toPageItems(valid);
-            const uploaded = await uploadChapterPages(
+            // Tạo chương nếu thiếu; đã có thì tái dùng (không tạo trùng số chương)
+            const chapter = await ensureChapter(
               mangaId,
-              chapterRes.id,
-              items,
-              (up, total) => {
-                patchState(states, manga.id, {
-                  currentChapter: `Đang upload: ${ch.name} — ${up}/${total} trang`,
-                });
-              },
-              setWaitNotice
+              chapterNumber,
+              ch.name !== chapterNumber ? ch.name.slice(0, 300) : null
             );
+            if (chapter.created) chaptersAdded += 1;
 
-            // Finalize — ghi nhận trang vào DB (server HeadObject xác minh)
-            let finalized = false;
-            for (let fAttempt = 0; fAttempt < 3 && !finalized; fAttempt++) {
-              try {
-                await api.post(`/api/chapters/${chapterRes.id}/pages`, {
-                  chapterId: chapterRes.id,
-                  pages: uploaded.map((p) => ({
-                    objectKey: p.objectKey as string,
-                    pageNumber: p.pageNumber as number,
-                    fileName: p.name,
-                    mimeType: p.mimeType,
-                    fileSize: p.size,
-                    width: p.width,
-                    height: p.height,
-                  })),
-                });
-                finalized = true;
-              } catch (err) {
-                if (cancelledRef.current) throw new CancelledError();
-                if (fAttempt === 2) throw err;
-                await sleepAbortable(4_000, () => cancelledRef.current);
+            // Chương cũ chưa có tiêu đề → bổ sung (không ghi đè tiêu đề đang có)
+            if (!chapter.created && !chapter.title && ch.name !== chapterNumber) {
+              await api
+                .patch(`/api/chapters/${chapter.id}`, { title: ch.name.slice(0, 300) })
+                .catch(() => {});
+            }
+
+            // Luôn đối chiếu trang hiện có để bổ sung trang còn thiếu (kể cả khi
+            // số trang bằng nhau nhưng thiếu 1 trang giữa và thừa 1 trang cuối).
+            {
+              let existingPageNumbers = new Set<number>();
+              if (chapter.pageCount > 0) {
+                try {
+                  const { pages } = await api.get<{ pages: PageDto[] }>(
+                    `/api/chapters/${chapter.id}/pages`
+                  );
+                  existingPageNumbers = new Set(pages.map((p) => p.pageNumber));
+                } catch {
+                  // không đọc được danh sách trang → thử upload lại từ đầu (presign tái dùng key cũ)
+                  existingPageNumbers = new Set();
+                }
+              }
+              const missing = valid.filter((p) => !existingPageNumbers.has(p.pageNumber));
+
+              if (missing.length > 0) {
+                // Chỉ upload/sinh presigned cho các trang còn thiếu
+                const items = toPageItems(missing);
+                const uploaded = await uploadChapterPages(
+                  mangaId,
+                  chapter.id,
+                  items,
+                  (up, total) => {
+                    patchState(states, manga.id, {
+                      currentChapter: `Đang upload: ${ch.name} — ${up}/${total} trang`,
+                    });
+                  },
+                  setWaitNotice
+                );
+
+                // Finalize — ghi nhận trang vào DB (server HeadObject xác minh)
+                let finalized = false;
+                for (let fAttempt = 0; fAttempt < 3 && !finalized; fAttempt++) {
+                  try {
+                    await api.post(`/api/chapters/${chapter.id}/pages`, {
+                      chapterId: chapter.id,
+                      pages: uploaded.map((p) => ({
+                        objectKey: p.objectKey as string,
+                        pageNumber: p.pageNumber as number,
+                        fileName: p.name,
+                        mimeType: p.mimeType,
+                        fileSize: p.size,
+                        width: p.width,
+                        height: p.height,
+                      })),
+                    });
+                    finalized = true;
+                  } catch (err) {
+                    if (cancelledRef.current) throw new CancelledError();
+                    if (fAttempt === 2) throw err;
+                    await sleepAbortable(4_000, () => cancelledRef.current);
+                  }
+                }
+                pagesAdded += uploaded.length;
               }
             }
 
@@ -781,11 +947,21 @@ export function BatchImportTab() {
               notices: notices.length ? notices : undefined,
             });
           } else {
+            let summary: string | undefined;
+            if (reused) {
+              if (chaptersAdded > 0) updates.push(`${chaptersAdded} chương mới`);
+              if (pagesAdded > 0) updates.push(`${pagesAdded} trang ảnh`);
+              summary =
+                updates.length > 0
+                  ? `Đã bổ sung: ${updates.join("; ")}.`
+                  : "Truyện đã đầy đủ — không có gì cần bổ sung.";
+            }
             patchState(states, manga.id, {
               status: "done",
               phase: undefined,
               currentChapter: undefined,
               notices: notices.length ? notices : undefined,
+              summary,
             });
           }
         } catch (err) {
@@ -960,11 +1136,11 @@ export function BatchImportTab() {
               {!importing && !finished && (
                 <label className="mt-1.5 flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                   <Checkbox
-                    checked={skipExisting}
-                    onCheckedChange={(v) => setSkipExisting(v === true)}
-                    aria-label="Bỏ qua truyện đã có trong thư viện"
+                    checked={syncExisting}
+                    onCheckedChange={(v) => setSyncExisting(v === true)}
+                    aria-label="Đồng bộ truyện đã có: bổ sung bìa, thông tin, chương và trang còn thiếu"
                   />
-                  Bỏ qua truyện đã có trong thư viện (trùng tên)
+                  Đồng bộ truyện đã có — bổ sung bìa, thông tin, chương và trang còn thiếu
                 </label>
               )}
             </div>

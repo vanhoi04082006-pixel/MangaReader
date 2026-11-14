@@ -1083,6 +1083,7 @@ import {
   mapStatus,
   parseGenres,
   parseChapterNumber,
+  assignChapterNumbers,
   buildMangasFromFiles,
   type FileWithPath,
 } from "../src/features/upload/folder-parser";
@@ -1179,6 +1180,23 @@ describe("parseChapterNumber (ten thu muc chuong)", () => {
     expect(parseChapterNumber("Extra")).toBe("Extra");
     expect(parseChapterNumber("  Omake  ")).toBe("Omake");
     expect(parseChapterNumber("E".repeat(80)).length).toBe(50);
+  });
+});
+
+describe("assignChapterNumbers (so chuong duy nhat khi trung)", () => {
+  test("trung so -> hau to -2, -3; giu nguyen thu tu", () => {
+    expect(
+      assignChapterNumbers([{ number: "1" }, { number: "1" }, { number: "1" }, { number: "2" }])
+    ).toEqual(["1", "1-2", "1-3", "2"]);
+  });
+  test("thieu so -> dung vi tri (i+1); ten khong so giu nguyen", () => {
+    expect(assignChapterNumbers([{ number: "" }, { number: "Extra" }])).toEqual(["1", "Extra"]);
+  });
+  test("gioi han 50 ky tu nhung van duy nhat", () => {
+    const out = assignChapterNumbers([{ number: "X".repeat(60) }, { number: "X".repeat(60) }]);
+    expect(out[0].length).toBe(50);
+    expect(out[1].length).toBeLessThanOrEqual(50);
+    expect(new Set(out).size).toBe(2);
   });
 });
 
