@@ -43,7 +43,9 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
   const route = useHashRoute();
   const settings = useReaderStore();
   const { data: payload, isLoading, isError, error, refetch } = useReaderPayload(chapterId);
-  const { data: chaptersData } = useChapters(mangaId, "asc", 1, 200);
+  // Danh sach chuong phan trang (200 chuong/trang — truyen dai hon khong bi cat)
+  const [chapterPage, setChapterPage] = useState(1);
+  const { data: chaptersData } = useChapters(mangaId, "asc", chapterPage, 200);
   const saveProgress = useSaveProgress();
   const { refresh } = useRefreshReader();
 
@@ -66,6 +68,7 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
   // ---------- Toolbar: hien/an bang tay (khong tu dong an/hien) ----------
   const showToolbar = useCallback(() => setToolbarVisible(true), []);
   const collapseToolbar = useCallback(() => setToolbarVisible(false), []);
+  const toggleToolbar = useCallback(() => setToolbarVisible((v) => !v), []);
 
   // Khi mo panel thi luon hien toolbar
   const isToolbarVisible = toolbarVisible || settingsOpen || chapterListOpen;
@@ -189,7 +192,11 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
         const el = document.querySelector(`[data-page-anchor="${target}"]`);
         if (el) (el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "start" });
         else {
-          const container = document.querySelector(".scrollbar-thin.overflow-y-auto");
+          // Fallback on dinh danh (khong phu thuoc class CSS — chong viec
+          // doi class lam hong selector)
+          const container =
+            document.querySelector("[data-reader-scroll]") ??
+            document.querySelector(".scrollbar-thin.overflow-y-auto");
           if (container) {
             const ratio = (target - 1) / total;
             (container as HTMLElement).scrollTop =
@@ -230,7 +237,24 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      // Chan phim khi focus dang o phan tu tuong tac:
+      // - INPUT/TEXTAREA/SELECT/CONTENTEDITABLE: dang go noi dung
+      // - BUTTON: Space se bam nut (tranh double-action: bam nut + doi trang)
+      // - [role=slider] (Radix Slider): ArrowLeft/Right dieu khien slider
+      //   (tranh nhay 2 trang cung luc — bug da fix)
+      const el = e.target instanceof HTMLElement ? e.target : null;
+      if (
+        el && (
+          el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          el.tagName === "BUTTON" ||
+          el.isContentEditable ||
+          el.closest('[role="slider"]')
+        )
+      ) {
+        return;
+      }
       switch (e.key) {
         case "Escape":
           if (settingsOpen) setSettingsOpen(false);
@@ -364,6 +388,7 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
             onChangePage={(p) => onPageChange(p, (p - 1) / Math.max(1, pageCount))}
             onSourceError={onSourceError}
             onRequestNextChapter={goNextChapter}
+            onToggleToolbar={toggleToolbar}
           />
         )}
       </div>
@@ -415,8 +440,38 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
                           <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{c.pageCount} tr.</span>
                         </button>
                       ))}
+                      {(chaptersData?.total ?? 0) > 0 && sortedChapters.length === 0 && (
+                        <p className="px-3 py-6 text-center text-sm text-muted-foreground">Trang này không có chương.</p>
+                      )}
                     </div>
                   </ScrollArea>
+                  {(chaptersData?.totalPages ?? 1) > 1 && (
+                    <div className="flex items-center justify-between gap-2 border-t px-2 py-1.5">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        aria-label="Trang chương trước"
+                        disabled={chapterPage <= 1}
+                        onClick={() => setChapterPage((p) => Math.max(1, p - 1))}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                        {chapterPage}/{chaptersData?.totalPages ?? 1} · {chaptersData?.total ?? 0} chương
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        aria-label="Trang chương sau"
+                        disabled={chapterPage >= (chaptersData?.totalPages ?? 1)}
+                        onClick={() => setChapterPage((p) => p + 1)}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </PopoverContent>
               </Popover>
 

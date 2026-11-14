@@ -160,6 +160,7 @@ export function VerticalReader({
   return (
     <div
       ref={containerRef}
+      data-reader-scroll=""
       className={cn("reader-scroll-contain h-full w-full overflow-y-auto scrollbar-thin")}
       aria-label="Vùng đọc truyện cuộn dọc"
     >
