@@ -166,6 +166,32 @@ export function parseChapterNumber(name: string): string {
   return trimmed.slice(0, 50) || "?";
 }
 
+/**
+ * Số chương duy nhất theo thứ tự thư mục. Nếu 2 thư mục cùng số (VD "Chap 1"
+ * và "(Jou) Chap 1") thì thư mục sau nhận hậu tố "-2", "-3"... để không đè nhau.
+ * Giới hạn 50 ký tự theo chapterCreateSchema.
+ */
+export function assignChapterNumbers(
+  chapters: Array<Pick<ParsedChapter, "number">>
+): string[] {
+  const used = new Set<string>();
+  return chapters.map((ch, i) => {
+    const base = (ch.number?.trim() || String(i + 1)).slice(0, 50);
+    if (!used.has(base)) {
+      used.add(base);
+      return base;
+    }
+    let k = 2;
+    let unique = `${base.slice(0, 50 - String(k).length - 1)}-${k}`;
+    while (used.has(unique)) {
+      k++;
+      unique = `${base.slice(0, 50 - String(k).length - 1)}-${k}`;
+    }
+    used.add(unique);
+    return unique;
+  });
+}
+
 // ---------------- build từ danh sách file ----------------
 
 interface FolderNode {
