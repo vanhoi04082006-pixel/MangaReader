@@ -378,8 +378,10 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
             transition={{ duration: 0.2 }}
             className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center px-2 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] sm:px-3"
           >
-            <div className="pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-1 rounded-xl border bg-background/85 p-1.5 shadow-lg backdrop-blur-md">
-              <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={exitReader} aria-label="Thoát">
+            <div className="pointer-events-auto flex w-full max-w-3xl flex-col gap-1 rounded-xl border bg-background/85 p-1.5 shadow-lg backdrop-blur-md">
+              {/* Hàng 1: Thoát + tiêu đề/chương + điều hướng trang + thu gọn */}
+              <div className="flex w-full items-center gap-1">
+              <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0 sm:h-9 sm:w-9" onClick={exitReader} aria-label="Thoát">
                 <X className="h-4.5 w-4.5" />
               </Button>
 
@@ -418,11 +420,11 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
                 </PopoverContent>
               </Popover>
 
-              <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
+              <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9"
+                  className="h-10 w-10 sm:h-9 sm:w-9"
                   onClick={() => jumpToPage(currentPage - 1)}
                   disabled={currentPage <= 1}
                   aria-label="Trang trước"
@@ -452,7 +454,7 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
                     }}
                     aria-label={`Trang hiện tại, tổng ${pageCount} trang`}
                     title="Nhập số trang rồi Enter để chuyển"
-                    className="h-7 w-12 rounded-md border border-input bg-background/60 px-1 text-center font-mono text-xs font-semibold tabular-nums outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                    className="no-zoom-input h-9 w-12 rounded-md border border-input bg-background/60 px-1 text-center font-mono text-xs font-semibold tabular-nums outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 sm:h-8"
                   />
                   <span className="font-mono text-xs font-semibold tabular-nums text-muted-foreground">
                     / {pageCount}
@@ -462,7 +464,7 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9"
+                  className="h-10 w-10 sm:h-9 sm:w-9"
                   onClick={() => jumpToPage(currentPage + 1)}
                   disabled={currentPage >= (payload.pages.length || 1)}
                   aria-label="Trang sau"
@@ -471,8 +473,23 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
                   <ChevronRight className="h-4.5 w-4.5" />
                 </Button>
 
-                <div className="mx-0.5 h-5 w-px bg-border sm:mx-1" />
+              </div>
 
+              {/* Nút sách thu gọn — mobile: bấm vào mới thu gọn thành nút sách */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="ml-0.5 h-10 w-10 shrink-0 sm:hidden"
+                onClick={collapseToolbar}
+                aria-label="Thu gọn thanh công cụ"
+                title="Thu gọn thanh công cụ"
+              >
+                <BookOpen className="h-4.5 w-4.5" />
+              </Button>
+
+              {/* Nhóm icon — desktop: cùng hàng với tiêu đề */}
+              <div className="hidden items-center gap-0.5 sm:flex">
+                <div className="mx-1 h-5 w-px bg-border" />
                 <Button
                   variant="ghost"
                   size="icon"
@@ -498,7 +515,7 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="hidden h-9 w-9 sm:inline-flex"
+                  className="h-9 w-9"
                   onClick={() => void toggleFullscreen()}
                   aria-label="Toàn màn hình"
                   title="Toàn màn hình (F)"
@@ -515,6 +532,32 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
                   title="Thu gọn thanh công cụ"
                 >
                   <BookOpen className="h-4.5 w-4.5" />
+                </Button>
+              </div>
+              </div>
+
+              {/* Hàng 2 (chỉ mobile): đổi chế độ đọc + cài đặt — target chạm lớn */}
+              <div className="flex w-full items-center justify-center gap-10 sm:hidden">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10"
+                  onClick={() => settings.update({ mode: settings.mode === "vertical" ? "paged" : "vertical" })}
+                  aria-label={settings.mode === "vertical" ? "Chuyển sang từng trang" : "Chuyển sang cuộn dọc"}
+                  title={settings.mode === "vertical" ? "Đọc từng trang" : "Cuộn dọc"}
+                >
+                  <Columns3 className="h-4.5 w-4.5" />
+                </Button>
+
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10"
+                  onClick={() => setSettingsOpen(true)}
+                  aria-label="Cài đặt đọc"
+                  title="Cài đặt đọc"
+                >
+                  <Settings2 className="h-4.5 w-4.5" />
                 </Button>
               </div>
 
@@ -536,19 +579,22 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
         )}
       </AnimatePresence>
 
-      {/* Nút hình quyển sách: mở lại toolbar khi đã thu gọn */}
+      {/* Nút hình quyển sách nổi: bấm vào mới sổ thanh công cụ ra.
+          Không bấm thì thanh giữ ẩn mãi — không tự hiện lại khi chạm/cuộn. */}
       <AnimatePresence>
         {!isToolbarVisible && (
           <motion.button
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute bottom-[max(1rem,env(safe-area-inset-bottom,0px))] right-4 z-10 rounded-full border bg-background/80 p-2.5 text-muted-foreground shadow-lg backdrop-blur-md transition-colors hover:text-foreground"
+            initial={{ opacity: 0, scale: 0.6, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.6, y: 12 }}
+            whileTap={{ scale: 0.88 }}
+            transition={{ type: "spring", stiffness: 420, damping: 24 }}
+            className="glow-primary absolute bottom-[max(1.25rem,calc(env(safe-area-inset-bottom,0px)+0.75rem))] right-4 z-10 flex h-12 w-12 items-center justify-center rounded-full border border-primary/35 bg-background/85 text-primary shadow-lg backdrop-blur-md transition-colors hover:text-foreground"
             onClick={showToolbar}
             aria-label="Mở thanh công cụ"
             title="Mở thanh công cụ"
           >
-            <BookOpen className="h-5 w-5" />
+            <BookOpen className="h-5.5 w-5.5" />
           </motion.button>
         )}
       </AnimatePresence>

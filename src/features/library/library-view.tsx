@@ -22,6 +22,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState, ErrorState } from "@/components/common/states";
+import { Pagination } from "@/components/common/pagination";
 import { MangaGrid, MangaListRow } from "@/components/manga/manga-card";
 import {
   useMangas,
@@ -69,16 +70,12 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
   const order = (route.query.get("order") ?? "desc") as "asc" | "desc";
   const page = queryInt(route.query, "page", 1);
 
-  const [pageDraft, setPageDraft] = useState(String(page));
-  useEffect(() => {
-    setPageDraft(String(page));
-  }, [page]);
-
   const setQuery = (patch: Record<string, string | null>) => {
     const base = favoritesOnly ? "/favorites" : "/library";
     navigate(`${base}${updateRouteQuery(route.query, patch)}`, { replace: true });
   };
 
+  // Desktop hiển thị 21 truyện/trang (7 cột x 3 hàng đều nhau)
   const filters: MangaFilters = {
     search: search || undefined,
     genre: genre || undefined,
@@ -87,7 +84,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
     order,
     favorites: favoritesOnly,
     page,
-    pageSize: 20,
+    pageSize: 21,
   };
 
   const { data, isLoading, isError, error, refetch } = useMangas(filters);
@@ -97,6 +94,15 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
   const onSearchSubmit = (value: string) => {
     setQuery({ search: value.trim() || null, page: null });
   };
+
+  // Trở về trang hợp lệ khi trang hiện tại vượt tổng trang
+  // (ví dụ đang ở trang sâu rồi lọc/bỏ lọc làm danh sách rút ngắn lại)
+  useEffect(() => {
+    if (!data) return;
+    if (data.items.length === 0 && data.totalPages > 0 && page > data.totalPages) {
+      setQuery({ page: String(data.totalPages) });
+    }
+  }, [data, page]);
 
   return (
     <div className="space-y-5">
@@ -279,7 +285,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
         />
       ) : isLoading ? (
         view === "grid" ? (
-          <div className="grid grid-cols-2 gap-x-3 gap-y-5 min-[420px]:grid-cols-3 sm:gap-x-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-5 min-[420px]:grid-cols-3 sm:gap-x-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 2xl:grid-cols-7">
             {Array.from({ length: 12 }).map((_, i) => (
               <div key={i} className="space-y-2.5">
                 <Skeleton className="aspect-[2/3] rounded-xl" />
@@ -297,7 +303,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
         )
       ) : data && data.items.length === 0 ? (
         <EmptyState
-          mascot={activeFilterCount > 0 ? "curious" : favoritesOnly ? "shy" : "sitting"}
+          mascot={activeFilterCount > 0 ? "curious" : favoritesOnly ? "starstruck" : "sitting"}
           title={
             activeFilterCount > 0
               ? "Không có truyện khớp bộ lọc"
@@ -337,58 +343,13 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
             </div>
           )}
 
-          {/* Phan trang */}
+          {/* Phan trang: Trước [nhập số] /N Sau */}
           {data.totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2 pt-4">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setQuery({ page: String(page - 1) })}
-              >
-                Trước
-              </Button>
-              <div className="flex items-center gap-1">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={pageDraft}
-                  onChange={(e) => setPageDraft(e.target.value.replace(/\D/g, ""))}
-                  onFocus={(e) => e.currentTarget.select()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      e.currentTarget.blur();
-                    }
-                  }}
-                  onBlur={() => {
-                    const n = Number.parseInt(pageDraft, 10);
-                    if (!Number.isFinite(n) || n < 1) {
-                      setPageDraft(String(page));
-                      return;
-                    }
-                    const clamped = Math.min(n, data.totalPages);
-                    setPageDraft(String(clamped));
-                    if (clamped !== page) setQuery({ page: String(clamped) });
-                  }}
-                  aria-label={`Trang hiện tại, tổng ${data.totalPages} trang`}
-                  title="Nhập số trang rồi Enter để chuyển"
-                  className="h-8 w-12 rounded-md border border-input bg-background px-1 text-center font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                />
-                <span className="font-mono text-sm text-muted-foreground">
-                  / {data.totalPages}
-                </span>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= data.totalPages}
-                onClick={() => setQuery({ page: String(page + 1) })}
-              >
-                Sau
-              </Button>
-            </div>
+            <Pagination
+              page={page}
+              totalPages={data.totalPages}
+              onChange={(p) => setQuery({ page: String(p) })}
+            />
           )}
         </>
       ) : null}

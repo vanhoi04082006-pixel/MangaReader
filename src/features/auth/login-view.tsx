@@ -53,7 +53,18 @@ export function LoginView() {
         className="relative z-10 w-full max-w-sm"
       >
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <img src="/logo.svg" alt="Logo Tsundoku" className="h-16 w-16 rounded-2xl shadow-lg" />
+          <motion.img
+            src="/mascots/waving.png"
+            alt="Mascot Tsundoku chào hỏi"
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1, y: [0, -5, 0] }}
+            transition={{
+              opacity: { duration: 0.4 },
+              scale: { duration: 0.4 },
+              y: { duration: 3.2, repeat: Infinity, ease: "easeInOut" },
+            }}
+            className="pointer-events-none h-20 w-20 rounded-full border border-primary/25 select-none drop-shadow-[0_10px_28px_color-mix(in_oklch,var(--primary)_35%,transparent)]"
+          />
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight">Tsundoku</h1>
             <p className="mt-1 text-sm text-muted-foreground">Thư viện truyện tranh cá nhân</p>

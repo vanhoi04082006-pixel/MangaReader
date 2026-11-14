@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import { BookOpenCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageImage } from "@/features/reader/page-image";
 import type { ReaderPayloadDto } from "@/types";
@@ -70,9 +70,12 @@ export function PagedReader({
   if (atEnd && payload.nextChapter) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-6 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-          <BookOpenCheck className="h-7 w-7 text-primary" />
-        </div>
+        <img
+          src="/mascots/celebrating.png"
+          alt=""
+          aria-hidden
+          className="pointer-events-none h-24 w-auto select-none drop-shadow-[0_10px_28px_color-mix(in_oklch,var(--primary)_35%,transparent)]"
+        />
         <div>
           <p className="text-lg font-bold">Hết chương {payload.chapter.chapterNumber}</p>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -96,7 +99,7 @@ export function PagedReader({
   return (
     <div
       className={cn(
-        "relative h-full w-full overflow-auto",
+        "reader-scroll-contain relative h-full w-full overflow-auto",
         fit === "height" ? "flex items-center justify-center" : "flex justify-center"
       )}
       onClick={onZoneClick}

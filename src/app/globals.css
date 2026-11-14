@@ -140,6 +140,8 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
+    /* Nền highlight xám khi bấm giữ trên mobile — sạch, dùng hiệu ứng riêng */
+    -webkit-tap-highlight-color: transparent;
   }
   ::selection {
     background: color-mix(in oklch, var(--primary) 35%, transparent);
@@ -239,6 +241,25 @@
   }
   .reader-bg-light {
     background-color: oklch(0.96 0.006 310);
+  }
+
+  /* Chặn iOS tự phóng to khi focus ô nhập số (font < 16px) trên thiết bị cảm ứng.
+     Chỉ áp cho pointer thô (điện thoại/tablet), desktop giữ nguyên cỡ chữ. */
+  @media (pointer: coarse) {
+    .no-zoom-input,
+    .no-zoom-input:focus {
+      font-size: 16px !important;
+    }
+    /* Ngón cái slider to hơn để kéo trang dễ dàng khi đọc truyện */
+    [data-slot="slider-thumb"] {
+      height: 1.25rem;
+      width: 1.25rem;
+    }
+  }
+
+  /* Vùng đọc truyện: chặn overscroll leo lên body (kéo-làm-mới lúc đọc) */
+  .reader-scroll-contain {
+    overscroll-behavior: contain;
   }
 
   /* Hiệu ứng gradient cho cover */

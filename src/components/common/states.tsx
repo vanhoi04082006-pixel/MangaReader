@@ -21,7 +21,11 @@ export type MascotKey =
   | "shocked"
   | "paw"
   | "book"
-  | "badge";
+  | "badge"
+  | "starstruck"
+  | "celebrating"
+  | "waving"
+  | "cozy";
 
 interface EmptyStateProps {
   icon?: LucideIcon;

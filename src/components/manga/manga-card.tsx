@@ -33,6 +33,7 @@ export function MangaCard({ manga, index = 0 }: { manga: MangaSummaryDto; index?
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
+      whileTap={{ scale: 0.97 }}
       transition={{ duration: 0.3, delay: Math.min(index * 0.035, 0.4), ease: "easeOut" }}
       className="group cursor-pointer"
       onClick={() => navigate(`/manga/${manga.id}`)}
@@ -103,7 +104,8 @@ export function MangaCard({ manga, index = 0 }: { manga: MangaSummaryDto; index?
 
 export function MangaGrid({ mangas }: { mangas: MangaSummaryDto[] }) {
   return (
-    <div className="grid grid-cols-2 gap-x-3 gap-y-5 min-[420px]:grid-cols-3 sm:gap-x-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+    // 21 truyện/trang trên desktop: 7 cột x 3 hàng đều nhau từ xl trở lên
+    <div className="grid grid-cols-2 gap-x-3 gap-y-5 min-[420px]:grid-cols-3 sm:gap-x-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 2xl:grid-cols-7">
       {mangas.map((m, i) => (
         <MangaCard key={m.id} manga={m} index={i} />
       ))}

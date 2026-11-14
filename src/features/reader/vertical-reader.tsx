@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpenCheck, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageImage } from "@/features/reader/page-image";
 import type { ReaderPayloadDto } from "@/types";
@@ -160,7 +160,7 @@ export function VerticalReader({
   return (
     <div
       ref={containerRef}
-      className={cn("h-full w-full overflow-y-auto scrollbar-thin")}
+      className={cn("reader-scroll-contain h-full w-full overflow-y-auto scrollbar-thin")}
       aria-label="Vùng đọc truyện cuộn dọc"
     >
       <div
@@ -202,9 +202,12 @@ export function VerticalReader({
           className="absolute inset-x-0 flex flex-col items-center gap-3 px-4 pb-16 pt-8 text-center"
           style={{ top: totalHeight }}
         >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-            <BookOpenCheck className="h-6 w-6 text-primary" />
-          </div>
+          <img
+            src="/mascots/celebrating.png"
+            alt=""
+            aria-hidden
+            className="pointer-events-none h-24 w-auto select-none drop-shadow-[0_10px_28px_color-mix(in_oklch,var(--primary)_35%,transparent)]"
+          />
           <p className="font-semibold">Hết chương {payload.chapter.chapterNumber}</p>
           {payload.nextChapter ? (
             <Button className="gap-2" onClick={onNextChapter}>

@@ -185,7 +185,7 @@ export function DashboardView() {
             </div>
             {data.recentlyAdded.length === 0 ? (
               <EmptyState
-                icon={BookOpen}
+                mascot="cozy"
                 title="Thư viện đang trống"
                 description="Thêm nhiều truyện cùng lúc chỉ bằng một thư mục — mỗi thư mục con là một bộ truyện."
                 action={
