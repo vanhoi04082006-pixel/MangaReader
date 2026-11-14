@@ -14,7 +14,6 @@ interface ReaderSettingsState {
   direction: ReaderDirection;
   background: ReaderBackground;
   pageGap: number; // px
-  autoHideToolbar: boolean;
   preloadCount: number; // so trang preload phia truoc
   update: (patch: Partial<Omit<ReaderSettingsState, "update">>) => void;
 }
@@ -27,7 +26,6 @@ export const useReaderStore = create<ReaderSettingsState>()(
       direction: "ltr",
       background: "dark",
       pageGap: 8,
-      autoHideToolbar: true,
       preloadCount: 3,
       update: (patch) => set(patch),
     }),

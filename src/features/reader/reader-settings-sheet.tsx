@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useReaderStore, type ReaderFit, type ReaderMode } from "@/store/reader-store";
@@ -176,17 +175,6 @@ export function ReaderSettingsSheet({ open, onOpenChange }: SettingsSheetProps) 
                 </button>
               ))}
             </div>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <Label className="text-sm font-medium">Tự động ẩn thanh công cụ</Label>
-              <p className="text-xs text-muted-foreground">Ẩn khi không di chuột</p>
-            </div>
-            <Switch
-              checked={settings.autoHideToolbar}
-              onCheckedChange={(v) => settings.update({ autoHideToolbar: v })}
-            />
           </div>
         </div>
       </SheetContent>
