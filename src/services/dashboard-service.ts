@@ -12,6 +12,9 @@ import type { DashboardDto, RecentUploadItemDto } from "@/types";
 export async function getDashboard(userId: string): Promise<DashboardDto> {
   const env = getEnv();
 
+  // So luong truyen hien thi o muc "Truyen moi them" (dashboard)
+  const RECENTLY_ADDED_LIMIT = 14;
+
   // FIX: dung luong phai la SUM(file_size) cua TOAN BO row CONFIRMED.
   // Cu: 1 query khong phan trang → PostgREST chi tra 1000 row dau →
   // dung luong bi thieu (312MB thay vi ~2.6GB). Nay: helper phan trang
@@ -30,7 +33,7 @@ export async function getDashboard(userId: string): Promise<DashboardDto> {
 
   const [continueList, recentMangasRes, recentUploadsRaw] = await Promise.all([
     continueReading(userId, 8),
-    supabase.from("mangas").select("id").order("created_at", { ascending: false }).limit(10),
+    supabase.from("mangas").select("id").order("created_at", { ascending: false }).limit(RECENTLY_ADDED_LIMIT),
     supabase
       .from("storage_objects")
       .select("*, manga:mangas(title), chapter:chapters(chapter_number)")
