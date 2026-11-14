@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  Check,
   LayoutGrid,
   List,
   Plus,
@@ -20,7 +21,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState, ErrorState } from "@/components/common/states";
 import { Pagination } from "@/components/common/pagination";
 import { MangaGrid, MangaListRow } from "@/components/manga/manga-card";
@@ -47,6 +47,27 @@ const STATUS_OPTIONS: Array<{ value: MangaStatus | "all"; label: string }> = [
   { value: "HIATUS", label: "Tạm dừng" },
   { value: "DROPPED", label: "Ngừng làm" },
 ];
+
+function statusLabel(value: string): string {
+  return STATUS_OPTIONS.find((o) => o.value === value)?.label ?? value;
+}
+
+/** Chip bo loc dang ap dung — hien thi ro "Dang loc: X (n truyen)" + nut Xoa tung chip. */
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-primary/35 bg-primary/10 py-0.5 pl-2.5 pr-1 text-xs font-medium text-primary">
+      <span className="truncate">{label}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-primary/20"
+        aria-label={`Bỏ lọc: ${label}`}
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
 
 export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const route = useHashRoute();
@@ -193,7 +214,18 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
                   )}
                   onClick={() => setQuery({ genre: g.name === genre ? null : g.name, page: null })}
                 >
-                  <Checkbox checked={genre === g.name} className="pointer-events-none" />
+                  {/* KHONG dung <Checkbox/> o day: Radix Checkbox render thanh
+                      <button> con trong <button> -> hydration error. Dung
+                      indicator thuan (single-select semantics). */}
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                      genre === g.name ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40"
+                    )}
+                  >
+                    {genre === g.name && <Check className="h-3 w-3" />}
+                  </span>
                   <span className="flex-1 truncate text-left">{g.name}</span>
                   <span className="text-xs text-muted-foreground">{g.mangaCount}</span>
                 </button>
@@ -276,6 +308,42 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
           </button>
         </div>
       </div>
+
+      {/* Chip bo loc dang ap dung — hien ro "Dang loc: Harem (21)" de khong
+          lam nguoi dung hieu nham "chi con 21 truyen" khi thu vien co 96 */}
+      {activeFilterCount > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5" aria-label="Bộ lọc đang áp dụng">
+          {search ? (
+            <FilterChip
+              label={`Từ khóa: "${search}"`}
+              onRemove={() => setQuery({ search: null, page: null })}
+            />
+          ) : null}
+          {genre ? (
+            <FilterChip
+              label={`Đang lọc: ${genre} (${data ? data.total.toLocaleString("vi-VN") : "…"} truyện)`}
+              onRemove={() => setQuery({ genre: null, page: null })}
+            />
+          ) : null}
+          {status ? (
+            <FilterChip
+              label={`Trạng thái: ${statusLabel(status)}`}
+              onRemove={() => setQuery({ status: null, page: null })}
+            />
+          ) : null}
+          {activeFilterCount > 1 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => navigate(favoritesOnly ? "/favorites" : "/library")}
+            >
+              <X className="h-3 w-3" />
+              Xóa tất cả lọc
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Noi dung */}
       {isError ? (

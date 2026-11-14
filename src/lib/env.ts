@@ -138,13 +138,17 @@ export function adminIdentityConfigIssue(): string | null {
  *   + PRODUCTION: bat buoc ton tai + UUID hop le + khop user.id (fail closed —
  *     KHONG bao gio fallback email-only trong production)
  *   + development: tuy chon, nhung neu dat thi PHAI khop (chong doi mat identity)
- * - local mode: chi chap nhan id "local-admin"
+ * - local mode: chi chap nhan id "local-admin" (hoac UUID admin neu
+ *   ADMIN_USER_ID duoc cau hinh — dev voi Supabase that can FK)
  */
 export function isAdminUser(user: SessionUser): boolean {
   const env = getEnv();
   const provider = env.authProvider;
   if (provider === "local") {
-    return user.id === "local-admin" && user.email.trim().toLowerCase() === env.admin.email;
+    // Dev-only: id la UUID admin that (neu cau hinh ADMIN_USER_ID) hoac
+    // "local-admin" (SQLite dev). Email phai khop ADMIN_EMAIL.
+    const expectedLocalId = env.admin.userId ?? "local-admin";
+    return user.id === expectedLocalId && user.email.trim().toLowerCase() === env.admin.email;
   }
   if (provider !== "supabase") return false; // cau hinh khong hop le -> fail closed
   const emailOk = user.email.trim().toLowerCase() === env.admin.email;

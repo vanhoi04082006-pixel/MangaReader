@@ -185,9 +185,12 @@ export async function listObjectsPage(opts: {
       MaxKeys: opts.maxKeys ?? 1000,
     })
   );
+  // Loc key rong phai dong thoi loc size (giu index khop nhau —
+  // audit dua vao page.sizes[i] ung voi page.keys[i])
+  const contents = (res.Contents ?? []).filter((o) => Boolean(o.Key));
   return {
-    keys: (res.Contents ?? []).map((o) => o.Key ?? "").filter(Boolean),
-    sizes: (res.Contents ?? []).map((o) => o.Size ?? 0),
+    keys: contents.map((o) => o.Key ?? ""),
+    sizes: contents.map((o) => o.Size ?? 0),
     continuationToken: res.IsTruncated ? res.NextContinuationToken : undefined,
     truncated: Boolean(res.IsTruncated),
   };

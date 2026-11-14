@@ -49,10 +49,11 @@ Website đọc truyện tranh cá nhân (single-admin) với lưu trữ ảnh tr
 - **Nhập hàng loạt từ thư mục** (`#/upload`, tab mặc định): chọn 1 bộ truyện hoặc thư mục cha chứa nhiều bộ — tự nhận diện cấu trúc, xem trước rồi nhập toàn bộ. Xem chi tiết [mục riêng](#nhập-hàng-loạt-từ-thư-mục) bên dưới.
 - **ZIP**: parser central-directory tự viết — đọc index trước (không giải nén cả archive vào RAM), lọc file rác (`__MACOSX`, file hệ thống), giới hạn 3000 ảnh/chương + chặn decompression bomb (entry giải nén > 100MB bị bỏ qua), natural sort (**`2.jpg` < `10.jpg`**), giải nén + upload từng trang.
 - **Thư mục** (`webkitdirectory`) và chọn từng ảnh (tab "Upload từng chương").
-- Presigned PUT trực tiếp browser → R2 (**ký kèm Content-Length**); fallback qua proxy server **chỉ cho file ≤ 4MB** (giới hạn body của Vercel) — file lớn bắt buộc presigned PUT (cần CORS cho bucket).
+- Presigned PUT trực tiếp browser → R2 (**ký kèm Content-Length**); fallback qua proxy server **chỉ cho file ≤ 4MB** (giới hạn body của Vercel) — file lớn bắt buộc presigned PUT (cần CORS cho bucket). UI hiển thị **chế độ đang dùng (trực tiếp/qua máy chủ)** và cảnh báo rõ khi phải dùng proxy (chưa cấu hình CORS).
+- **Batch presign** (`/api/uploads/presign-batch`, tối đa 100 file/request): import 7.297 ảnh chỉ cần ~73 request thay vì 7.297 — không còn chạm rate limit presign (1000 request/10 phút). Presign lazy theo cửa sổ 100 file để URL 15 phút không hết hạn giữa chừng; gặp 429 tự chờ (theo `Retry-After`) rồi thử lại.
 - Proxy đếm **byte thực tế** khi streaming, yêu cầu key đang `PENDING`, đúng namespace + MIME, kích thước thực phải khớp khai báo.
-- **Finalize có xác minh**: trước khi ghi nhận trang, server HeadObject từng object trên R2 — kiểm tra tồn tại, đúng kích thước, đúng MIME, đúng manga/chapter.
-- Concurrency 3, retry (không presign lại — tái dùng key), pause/resume, hủy + dọn file, tiến độ từng file + tổng (tốc độ, ETA), capture kích thước ảnh.
+- **Finalize có xác minh**: trước khi ghi nhận trang, server HeadObject từng object trên R2 — kiểm tra tồn tại, đúng kích thước, đúng MIME, đúng manga/chapter (upsert/confirm theo batch 200 row).
+- Concurrency 3, retry (không presign lại — tái dùng key), pause/resume, hủy + dọn file, tiến độ từng file + tổng (**%, tốc độ, ETA** — cả tab nhập hàng loạt), capture kích thước ảnh.
 - **Quota 100GB kiểm tra server-side** khi presign (tính cả upload PENDING đang sống).
 - Track mọi object đã cấp presign (bảng `storage_objects`) → phát hiện + dọn file mồ côi.
 
@@ -92,13 +93,16 @@ Chi tiết xử lý:
 
 ### Đọc truyện
 - **Cuộn dọc** (virtualized — chỉ render trang trong viewport, khôi phục vị trí cuộn).
-- **Từng trang**: phím mũi tên/Space, click zone, hướng đọc LTR/RTL.
-- Cài đặt lưu localStorage: chế độ, fit (width/height/original), khoảng cách trang, nền đọc (tối/đen/sáng), tự ẩn toolbar, số trang preload.
+- **Từng trang**: phím mũi tên/Space (không xung đột khi đang focus ô nhập/slider/nút), click zone trái/phải, **tap vùng giữa để thu gọn/mở thanh công cụ**, **vuốt ngang để đổi trang (mobile, tôn trọng hướng đọc LTR/RTL)**, hướng đọc LTR/RTL.
+- Ô nhập số trang (Enter để chuyển, Escape hoàn tác), thanh trượt nhảy nhanh, popover chọn chương **có phân trang** (truyện > 200 chương vẫn chuyển được).
+- Toolbar chỉ thu gọn/mở bằng tay (nút sách + FAB nổi) — không tự ẩn khi chạm/cuộn.
+- Cài đặt lưu localStorage: chế độ, fit (width/height/original), khoảng cách trang, nền đọc (tối/đen/sáng), số trang preload.
 - Tự lưu tiến độ (throttle + khi rời trang/ẩn tab), "Tiếp tục đọc", lịch sử đọc.
 
 ### Lưu trữ (toàn vẹn DB ↔ R2)
-- Thống kê dung lượng thật từ DB metadata (theo truyện, file lớn nhất), cảnh báo hạn mức.
-- **Audit file mồ côi**: quét ListObjectsV2 phân trang so với DB → liệt kê + dọn dẹp an toàn (kiểm tra tham chiếu trước khi xóa).
+- Thống kê dung lượng thật từ DB metadata — **SUM toàn bộ bằng phân trang** (không bị PostgREST cắt 1000 row), kèm breakdown: đã xác nhận / chờ finalize / chờ xóa / mồ côi.
+- **Audit file mồ côi (đã fix false positive)**: quét ListObjectsV2 phân trang, mỗi trang 1000 object được đối chiếu DB bằng **lookup chunk theo ngân sách URL (~55 key/request)** — request `.in()` 1000 key sẽ vượt giới hạn ~8KB của PostgREST → bị từ chối → cũ từng coi toàn bộ là mồ côi (bug "10.755 file / 3.8GB có thể thu hồi"). Lỗi DB giờ được **nâng lên** thay vì nuốt lặng rồi đếm sai.
+- **Cleanup 3 chế độ** (`mode: pending | failed | keys`), UI có nút riêng cho từng chế độ, **dry-run mặc định** (xem trước số ứng viên rồi mới xác nhận): dọn upload gián đoạn (PENDING > 24h), retry xóa thất bại (DELETE_PENDING), dọn mồ côi (chỉ theo danh sách audit; server tái kiểm tra tham chiếu + bỏ qua PENDING còn tươi trước khi xóa).
 - **Xóa an toàn (idempotent)**: xóa truyện/chương/trang đánh dấu `DELETE_PENDING` → xóa DB → xóa R2 → **chỉ** xóa metadata khi R2 xác nhận đã xóa. Xóa thất bại → giữ metadata, retry qua cleanup (`mode: "failed"`). Không bao giờ mất tham chiếu tới object thật.
 - Abort upload chỉ nhắm vào object `PENDING` (không thể abort object đã CONFIRMED).
 
@@ -190,7 +194,9 @@ bun run dev                   # http://localhost:3000  (Windows: bun run dev:win
      "MaxAgeSeconds": 3600
    }]
    ```
-   (Token chỉ có quyền object thì script sẽ in sẵn JSON để dán vào Dashboard.) **Chưa có CORS** app vẫn chạy: upload tự fallback qua proxy server — nhưng bị giới hạn **4MB/ảnh** (giới hạn body của Vercel). Cấu hình CORS để upload trực tiếp file tới 100MB.
+   **Lưu ý quan trọng (đã xác minh bằng thực tế):** token API R2 chỉ có quyền **object-level** sẽ bị `AccessDenied` khi `GetBucketCors`/`PutBucketCors` — tức là **không thể sửa CORS qua API/script**. Phải dán JSON trên bằng tay trong **Cloudflare Dashboard → R2 → bucket `manga-storage` → Settings → CORS Policy**. Gồm cả origin production (`https://mangareader-chi.vercel.app` hoặc domain tùy chỉnh) VÀ `http://localhost:3000` cho dev.
+
+   **Chưa có CORS thì app vẫn chạy** — upload tự fallback qua proxy server nhưng bị giới hạn **4MB/ảnh** (giới hạn body của Vercel), chậm và tốn băng thông server. Từ bản này UI **không im lặng fallback nữa**: tiến độ upload hiển thị rõ chế độ đang dùng và treo cảnh báo vàng kèm hướng dẫn cấu hình khi phải đi qua proxy. Cấu hình CORS để upload trực tiếp file tới 100MB.
 
 ---
 
@@ -286,12 +292,13 @@ Chi tiết đầy đủ mọi kiểm soát + bằng chứng kiểm thử: `docs/
 
 ```bash
 bun run dev                    # integration test cần server đang chạy
-bun test tests/                # 124 test: 69 unit + 55 integration
+bun test tests/unit.test.ts    # 100 unit tests
+bun test tests/integration.test.ts  # 57 integration tests (cần server + Supabase/R2 thật)
 ```
 
 - **CI (GitHub Actions)**: mỗi PR/push vào `main` tự chạy lint, typecheck, unit tests, `bun audit` và production build (`.github/workflows/ci.yml`). Integration chỉ chạy trong CI khi bật biến repo `ENABLE_INTEGRATION_TESTS=true` + cấu hình secrets staging (mặc định bỏ qua).
 
-- **Unit**: provider fail-closed, ranh giới admin identity, CSRF, JWT expiry, ZIP hardening (bomb/caps), **hợp đồng header key Supabase (sb_* mới + legacy JWT)**, resolve đường dẫn SQLite (Windows/UNC/query param), JWT payload/session_id, luồng verify-rls (cleanup luôn chạy — fetch mock).
+- **Unit**: provider fail-closed, ranh giới admin identity, CSRF, JWT expiry, ZIP hardening (bomb/caps), **hợp đồng header key Supabase (sb_* mới + legacy JWT)**, resolve đường dẫn SQLite (Windows/UNC/query param), JWT payload/session_id, luồng verify-rls (cleanup luôn chạy — fetch mock), **chunking ngân sách URL + phân lớp orphan audit (mock 10.755 key → 0 false positive) + SUM dung lượng theo status**.
 - **Integration** (chạy với Supabase + R2 thật): login đúng/sai/non-admin, user Supabase thứ 2 bị 403 ở mọi API bảo vệ, CSRF cross-site, upload roundtrip thật (presign → R2 → finalize verify → xóa đồng bộ), giới hạn proxy, abort an toàn, logout revoke, **revocation cross-runtime (replay token ở tiến trình riêng sau logout bị từ chối; token revoked không DELETE/cleanup/mutation được)**, rate limit 429.
 - Test không chạm dữ liệu thật: tạo/xóa dữ liệu riêng; user Supabase tạm được xóa sau test; bảng rate limit được reset trước mỗi lần chạy.
 - Ghi chú: `bun test tests/` chạy cả 2 file trong 1 process — file unit đã snapshot/hoàn nguyên env để không rò rỉ cấu hình sang file integration.

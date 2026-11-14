@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { navigate, useHashRoute } from "@/lib/client/hash-router";
+import { navigate, updateRouteQuery, useHashRoute } from "@/lib/client/hash-router";
 import { useAuthStore } from "@/store/auth-store";
 import { cn } from "@/lib/utils";
 
@@ -36,14 +36,24 @@ export function Header() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Giu nguyen ref query moi nhat de debounce khong dung query cu
+  // (sync trong effect — khong sua ref trong lan render)
+  const routeQueryRef = useRef(route.query);
+  useEffect(() => {
+    routeQueryRef.current = route.query;
+  }, [route.query]);
+
   const onSearchChange = (value: string) => {
     setSearch(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      const params = new URLSearchParams();
-      if (value.trim()) params.set("search", value.trim());
-      const qs = params.toString();
-      navigate(`/library${qs ? `?${qs}` : ""}`, { replace: true });
+      // GIU NGUYEN cac filter dang co (genre/status/sort) — cu chi giu
+      // search nen bam tim tu global lam mat het bo loc dang ap dung.
+      const qs = updateRouteQuery(routeQueryRef.current, {
+        search: value.trim() || null,
+        page: null,
+      });
+      navigate(`/library${qs}`, { replace: true });
     }, 400);
   };
 

@@ -25,7 +25,11 @@ export type MascotKey =
   | "starstruck"
   | "celebrating"
   | "waving"
-  | "cozy";
+  | "cozy"
+  // Bộ mascot bổ sung 2026-11 (khớp phong cách sticker mèo đen):
+  | "sweeping" // dọn dẹp lưu trữ
+  | "scan" // quét audit / kiểm tra
+  | "tag"; // quản lý thể loại
 
 interface EmptyStateProps {
   icon?: LucideIcon;

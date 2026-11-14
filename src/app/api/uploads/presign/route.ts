@@ -10,7 +10,7 @@ import { ok, fail, parseBody, requireAdminMutation, withErrorHandling, ApiError 
 import { presignSchema, MAX_FILE_SIZE } from "@/schemas";
 import { supabase } from "@/lib/supabase";
 import { presignPut, pageObjectKey, coverObjectKey, extFromMime } from "@/lib/r2";
-import { getEnv } from "@/lib/env";
+import { getQuotaUsageBytes } from "@/services/storage-service";
 import { hitRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -55,18 +55,13 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   }
 
   // ---- Kiem tra storage quota (server-side) ----
-  // Tinh: dung luong CONFIRMED + PENDING "con song" (tao < 24h — qua han se bi cleanup).
-  // 1 truy van duy nhat (or) thay vi 2 de giam latency round-trip.
-  const env = getEnv();
-  const activePendingSince = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const { data: usedRows } = await supabase
-    .from("storage_objects")
-    .select("file_size")
-    .or(`status.eq.CONFIRMED,and(status.eq.PENDING,created_at.gte.${activePendingSince})`);
-  const usedBytes = (usedRows ?? []).reduce((s: number, r: any) => s + Number(r.file_size ?? 0), 0);
-  if (usedBytes + input.fileSize > env.storageQuotaBytes) {
+  // CONFIRMED + PENDING tuoi (< 24h) + file sap them. Dung helper co
+  // cache 60s (phan trang dung — cu scan toan bang cho MOI presign va
+  // con sai vi PostgREST cat 1000 row).
+  const { usedBytes, quotaBytes } = await getQuotaUsageBytes(input.fileSize);
+  if (usedBytes > quotaBytes) {
     return fail(
-      `Vượt hạn mức lưu trữ (${Math.round(env.storageQuotaBytes / 1024 / 1024 / 1024)}GB). ` +
+      `Vượt hạn mức lưu trữ (${Math.round(quotaBytes / 1024 / 1024 / 1024)}GB). ` +
         `Đã dùng ~${(usedBytes / 1024 / 1024 / 1024).toFixed(2)}GB. Hãy dọn dẹp file hoặc tăng STORAGE_QUOTA_GB.`,
       507,
       "quota_exceeded"

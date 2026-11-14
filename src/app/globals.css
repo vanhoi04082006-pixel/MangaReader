@@ -205,6 +205,45 @@
       0 0 46px color-mix(in oklch, var(--primary) 30%, transparent);
   }
 
+  /* ---- Mascot micro-interactions (khớp bộ sticker mèo đen) ---- */
+
+  /* Lơ lửng nhẹ — trang trí section (sweeping/tag mascot) */
+  .mascot-float {
+    animation: mascot-float 3.6s ease-in-out infinite;
+    will-change: transform;
+  }
+  @keyframes mascot-float {
+    0%, 100% { transform: translateY(0) rotate(-1deg); }
+    50% { transform: translateY(-7px) rotate(1.5deg); }
+  }
+
+  /* Nhún nhanh — trạng thái đang làm việc (scan mascot khi quét) */
+  .mascot-bob {
+    animation: mascot-bob 1.4s ease-in-out infinite;
+    will-change: transform;
+  }
+  @keyframes mascot-bob {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-4px) scale(1.04); }
+  }
+
+  /* Phản hồi chạm cho nút (mobile: cảm giác "nhấn") */
+  .press-feedback {
+    transition: transform 0.12s ease;
+  }
+  .press-feedback:active {
+    transform: scale(0.96);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mascot-float,
+    .mascot-bob,
+    .press-feedback {
+      animation: none;
+      transition: none;
+    }
+  }
+
   /* Nền aurora tím neon — dùng cho khu hero / shell */
   .bg-aurora {
     background:

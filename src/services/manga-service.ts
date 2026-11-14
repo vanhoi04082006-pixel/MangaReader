@@ -8,7 +8,12 @@ import { ApiError } from "@/lib/api";
 import { deleteObjects } from "@/lib/r2";
 import { ensureGenres } from "@/services/genre-service";
 import { ensureProfile } from "@/services/profile-service";
-import { safeDeleteObjects, removeMetadataIfDeleted } from "@/services/storage-service";
+import {
+  safeDeleteObjects,
+  removeMetadataIfDeleted,
+  invalidateStorageUsageCache,
+} from "@/services/storage-service";
+import { chunkedSelectIn, chunkedUpdate, fetchAllRows } from "@/lib/postgrest-chunk";
 import type { MangaCreateInput, MangaUpdateInput, MangaStatus } from "@/schemas";
 import type { MangaSummaryDto, MangaDetailDto, DuplicateMatchDto, Paginated } from "@/types";
 import { naturalCompare } from "@/utils/natural-sort";
@@ -63,24 +68,25 @@ interface ListParams {
 
 export async function getMangaSummaries(ids: string[], userId: string): Promise<MangaSummaryDto[]> {
   if (ids.length === 0) return [];
-  const { data: mangas } = await supabase
-    .from("mangas")
-    .select("*, genres:manga_genres(genre:genres(name)), favorites:favorites(created_at), reading_progress:reading_progress(page_number, updated_at, chapter:chapters(id, chapter_number, page_count))")
-    .in("id", ids);
+  // Chunk theo ngan sach URL — danh sach id co the dai (UUID 36 ky tu)
+  const mangas = await chunkedSelectIn<any>(
+    "mangas",
+    "id",
+    ids,
+    "*, genres:manga_genres(genre:genres(name)), favorites:favorites(created_at), reading_progress:reading_progress(page_number, updated_at, chapter:chapters(id, chapter_number, page_count))",
+    "đọc summaries"
+  );
 
-  // chapter counts
-  const { data: chapterAgg } = await supabase
-    .from("chapters")
-    .select("manga_id")
-    .in("manga_id", ids);
-
+  // chapter counts — bo query chet (chapterAgg chi select manga_id, khung dung)
+  const chapters = await chunkedSelectIn<{ manga_id: string; page_count: number | null }>(
+    "chapters",
+    "manga_id",
+    ids,
+    "manga_id, page_count",
+    "đọc số chương"
+  );
   const chapterMap = new Map<string, { count: number; pages: number }>();
-  // Need page counts per chapter
-  const { data: chapters } = await supabase
-    .from("chapters")
-    .select("manga_id, page_count")
-    .in("manga_id", ids);
-  for (const c of chapters ?? []) {
+  for (const c of chapters) {
     const agg = chapterMap.get(c.manga_id) ?? { count: 0, pages: 0 };
     agg.count++;
     agg.pages += c.page_count ?? 0;
@@ -226,12 +232,20 @@ export async function getMangaDetail(mangaId: string, userId: string): Promise<M
     source_url?: string | null;
   } | null;
   if (!manga) return null;
-  const { data: storageAgg } = await supabase
-    .from("storage_objects")
-    .select("file_size")
-    .eq("manga_id", mangaId)
-    .eq("status", "CONFIRMED");
-  const sizeBytes = (storageAgg ?? []).reduce((sum: number, r: any) => sum + Number(r.file_size ?? 0), 0);
+  // Phan trang — truyen co the > 1000 object (PostgREST cat 1000 row
+  // -> sizeBytes chi tinh nua chuyen — dung SUM toan bo)
+  const storageRows = await fetchAllRows<{ file_size: number | string | null }>(
+    (from, to) =>
+      supabase
+        .from("storage_objects")
+        .select("file_size")
+        .eq("manga_id", mangaId)
+        .eq("status", "CONFIRMED")
+        .order("object_key", { ascending: true })
+        .range(from, to),
+    "đọc dung lượng truyện"
+  );
+  const sizeBytes = storageRows.reduce((sum, r) => sum + Number(r.file_size ?? 0), 0);
   return {
     ...summaries[0],
     alternativeTitles: manga.alternative_titles,
@@ -305,30 +319,55 @@ export async function updateManga(mangaId: string, input: MangaUpdateInput) {
 export async function deleteManga(mangaId: string) {
   const { data: manga } = await supabase
     .from("mangas")
-    .select("id, cover_image_key, chapters(id)")
+    .select("id, cover_image_key")
     .eq("id", mangaId)
     .maybeSingle();
   if (!manga) throw new ApiError("Không tìm thấy truyện.", 404, "not_found");
 
-  const chapterIds = (manga.chapters ?? []).map((c: any) => c.id);
-  const { data: pageObjects } = chapterIds.length > 0
-    ? await supabase.from("pages").select("object_key").in("chapter_id", chapterIds)
-    : { data: [] };
-  const { data: storageRows } = await supabase.from("storage_objects").select("object_key").eq("manga_id", mangaId);
+  // Lay toan bo object key cua truyen (phan trang + embed pages —
+  // PostgREST cat 1000 row root; embed pages(object_key) khong bi cat):
+  // truyen > 1000 chapter/page se mat key neu khong phan trang root.
+  const chapterRows = await fetchAllRows<any>(
+    (from, to) =>
+      supabase
+        .from("chapters")
+        .select("id, pages(object_key)")
+        .eq("manga_id", mangaId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    "đọc chapters để xóa truyện"
+  );
+  const storageRows = await fetchAllRows<{ object_key: string }>(
+    (from, to) =>
+      supabase
+        .from("storage_objects")
+        .select("object_key")
+        .eq("manga_id", mangaId)
+        .order("object_key", { ascending: true })
+        .range(from, to),
+    "đọc storage_objects để xóa truyện"
+  );
 
-  const keys = new Set<string>([
-    ...(pageObjects ?? []).map((p: any) => p.object_key),
-    ...(storageRows ?? []).map((s: any) => s.object_key),
-  ]);
+  const keys = new Set<string>();
+  for (const c of chapterRows) {
+    for (const p of c.pages ?? []) keys.add(p.object_key);
+  }
+  for (const s of storageRows) keys.add(s.object_key);
   if (manga.cover_image_key) keys.add(manga.cover_image_key);
   const keyList = Array.from(keys);
 
   if (keyList.length > 0) {
-    await supabase
-      .from("storage_objects")
-      .update({ status: "DELETE_PENDING" })
-      .in("object_key", keyList)
-      .in("status", ["PENDING", "CONFIRMED"]);
+    // Chunk theo ngan sach URL — key 108 ky tu, > 55 key la tran
+    await chunkedUpdate(
+      (chunk) =>
+        supabase
+          .from("storage_objects")
+          .update({ status: "DELETE_PENDING" })
+          .in("object_key", chunk)
+          .in("status", ["PENDING", "CONFIRMED"]),
+      keyList,
+      "xóa truyện: đánh dấu DELETE_PENDING"
+    );
   }
 
   await supabase.from("mangas").delete().eq("id", mangaId);
@@ -343,6 +382,7 @@ export async function deleteManga(mangaId: string) {
       console.warn(`[manga-service] ${retryNeeded} object xoa R2 that bai — giu DELETE_PENDING, cleanup se retry.`);
     }
   }
+  invalidateStorageUsageCache();
 
   return { deleted: true, objectsRemoved: removedCount, objectsPendingRetry: retryNeeded };
 }

@@ -180,6 +180,10 @@ export interface StorageStatsDto {
   pendingObjects: number;
   /** Object dan dau DELETE_PENDING (xoa R2 that bai — cho retry). */
   deletePendingObjects: number;
+  /** Breakdown dung luong cho UI: bytes cac object PENDING (chua finalize). */
+  pendingBytes: number;
+  /** Breakdown dung luong cho UI: bytes cac object DELETE_PENDING. */
+  deletePendingBytes: number;
 }
 
 export interface OrphanAuditItemDto {

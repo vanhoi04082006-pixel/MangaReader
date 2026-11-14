@@ -1,16 +1,17 @@
-// GET /api/genres — danh sach the loai (seed mac dinh lan dau)
+// GET /api/genres — danh sach the loai (seed 223 mac dinh CHI lan dau,
+// khi bang rong — cu re-seed moi request nen khong xoa duoc genre)
 // POST /api/genres — tao the loai moi
 import { NextRequest, NextResponse } from "next/server";
 import { ok, parseBody, requireAdmin, requireAdminMutation, withErrorHandling } from "@/lib/api";
 import { genreCreateSchema } from "@/schemas";
-import { listGenres, seedDefaultGenres, ensureGenres } from "@/services/genre-service";
+import { listGenres, seedDefaultGenresIfEmpty, ensureGenres } from "@/services/genre-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export const GET = withErrorHandling(async (req: NextRequest) => {
   await requireAdmin(req);
-  await seedDefaultGenres();
+  await seedDefaultGenresIfEmpty();
   const genres = await listGenres();
   return ok({ genres });
 }) as unknown as (req: NextRequest) => Promise<NextResponse>;

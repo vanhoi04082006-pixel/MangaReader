@@ -211,7 +211,7 @@ function BottomNav() {
               href={`#${item.href}`}
               aria-label={item.label}
               aria-current={active ? "page" : undefined}
-              className="relative flex min-w-14 flex-1 flex-col items-center gap-0.5 px-1 pb-1.5 pt-2.5 text-[11px] font-medium transition-colors"
+              className="press-feedback relative flex min-w-14 flex-1 flex-col items-center gap-0.5 px-1 pb-1.5 pt-2.5 text-[11px] font-medium transition-colors"
             >
               {active && (
                 <motion.span

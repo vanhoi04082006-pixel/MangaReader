@@ -76,6 +76,28 @@ export const presignSchema = z.object({
   pageNumber: z.number().int().min(1).max(100000).optional().nullable(),
 });
 
+/**
+ * Batch presign: 1 request cap URL cho toi da 100 file — giam so
+ * request presign tu N thanh ceil(N/100) (import 7.297 anh: 7.297
+ * request -> 73 request, khong con cham vao rate limit 1000/10phut).
+ */
+export const presignBatchItemSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.enum(IMAGE_MIME_TYPES, { message: "Định dạng ảnh không được hỗ trợ (chấp nhận JPEG/PNG/WebP/AVIF/GIF)" }),
+  fileSize: z
+    .number()
+    .int()
+    .positive("Kích thước file không hợp lệ")
+    .max(MAX_FILE_SIZE, "Mỗi ảnh tối đa 100MB"),
+  pageNumber: z.number().int().min(1).max(100000).optional().nullable(),
+});
+
+export const presignBatchSchema = z.object({
+  mangaId: z.uuid("ID truyện không hợp lệ"),
+  chapterId: z.uuid("ID chương không hợp lệ").optional().nullable(),
+  items: z.array(presignBatchItemSchema).min(1, "Không có file nào để cấp URL").max(100),
+});
+
 export const pageMetaSchema = z.object({
   objectKey: z.string().min(1).max(500),
   pageNumber: z.number().int().min(1).max(100000),
@@ -165,5 +187,6 @@ export type MangaUpdateInput = z.infer<typeof mangaUpdateSchema>;
 export type ChapterCreateInput = z.infer<typeof chapterCreateSchema>;
 export type ChapterUpdateInput = z.infer<typeof chapterUpdateSchema>;
 export type PresignInput = z.infer<typeof presignSchema>;
+export type PresignBatchInput = z.infer<typeof presignBatchSchema>;
 export type PagesFinalizeInput = z.infer<typeof pagesFinalizeSchema>;
 export type ProgressInput = z.infer<typeof progressSchema>;

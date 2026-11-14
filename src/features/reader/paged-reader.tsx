@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageImage } from "@/features/reader/page-image";
@@ -16,7 +16,12 @@ interface PagedReaderProps {
   onChangePage: (page: number) => void;
   onSourceError: () => void;
   onRequestNextChapter: () => void;
+  /** Bam vung giua (mobile/PC) de hien/an thanh cong cu. */
+  onToggleToolbar?: () => void;
 }
+
+/** Nguong vuot (px) — duoi muc nay coi la tap, khong phai swipe. */
+const SWIPE_THRESHOLD_PX = 48;
 
 export function PagedReader({
   payload,
@@ -27,11 +32,13 @@ export function PagedReader({
   onChangePage,
   onSourceError,
   onRequestNextChapter,
+  onToggleToolbar,
 }: PagedReaderProps) {
   const pageCount = payload.pages.length;
   const page = payload.pages[current - 1];
   const isLast = current >= pageCount;
   const atEnd = isLast;
+  const touchStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
 
   // Preload cac trang phia truoc
   useEffect(() => {
@@ -50,7 +57,7 @@ export function PagedReader({
     [direction, current, pageCount, onChangePage]
   );
 
-  // Vung bam: 32% trai/phai de doi trang, giua hien/an toolbar
+  // Vung bam: 32% trai/phai de doi trang, GIUA hien/an thanh cong cu
   const onZoneClick = (e: React.MouseEvent) => {
     const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
@@ -63,8 +70,39 @@ export function PagedReader({
     } else if (x > rightZone) {
       if (direction === "ltr") navNext();
       else navPrev();
+    } else {
+      // Vung giua: hien/an thanh cong cu (tuong tu nút quyển sách)
+      onToggleToolbar?.();
     }
-    // vung giua: khong lam gi (toolbar toggle xu ly o reader-view)
+  };
+
+  // Swipe ngang doi trang (mobile): vuot sang trai/phai >= 48px
+  // va gan nhu ngang (|dx| > 1.5*|dy|) thi coi la vuot — tap nho
+  // khong kich hoat (se roi vao onZoneClick nhu binh thuong).
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() };
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) < SWIPE_THRESHOLD_PX) return; // tap — bo qua
+    if (Math.abs(dx) < Math.abs(dy) * 1.5) return; // cuon doc — bo qua
+    const swipeRight = dx > 0;
+    // ltr: vuot sang trai = trang truoc; rtl nguoc lai
+    if (direction === "ltr") {
+      if (swipeRight) navPrev();
+      else navNext();
+    } else {
+      if (swipeRight) navNext();
+      else navPrev();
+    }
   };
 
   if (atEnd && payload.nextChapter) {
@@ -103,6 +141,8 @@ export function PagedReader({
         fit === "height" ? "flex items-center justify-center" : "flex justify-center"
       )}
       onClick={onZoneClick}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
       role="presentation"
     >
       {page && (
