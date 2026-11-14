@@ -3,6 +3,7 @@
 // =============================================================
 
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/postgrest-chunk";
 
 // Danh muc the loai mac dinh (223 muc — dong bo voi seed trong
 // supabase/migrations/0001_init.sql). Thu tu la thu tu danh muc goc;
@@ -237,17 +238,59 @@ export async function listGenres() {
   // Dem so manga theo the loai trong MOT truy van nho quan he FK nhung
   // (manga_genres(count)). Truoc day la N+1: moi the loai 1 round-trip —
   // voi 223 the loai thi moi GET /api/genres ton ~223 truy van.
-  const { data, error } = await supabase
-    .from("genres")
-    .select("id, name, manga_genres(count)")
-    .order("name", { ascending: true });
-  if (error) throw new Error(`listGenres failed: ${error.message}`);
+  // Phan trang phong ve (PostgREST cat 1000 row moi response).
+  const rows = await fetchAllRows<any>(
+    (from, to) =>
+      supabase
+        .from("genres")
+        .select("id, name, manga_genres(count)")
+        .order("name", { ascending: true })
+        .range(from, to),
+    "đọc genres"
+  );
 
-  return (data ?? []).map((g: any) => ({
+  return rows.map((g: any) => ({
     id: g.id as string,
     name: g.name as string,
     mangaCount: Number(g.manga_genres?.[0]?.count ?? 0),
   }));
+}
+
+/** Seed 223 the loai mac dinh CHI khi bang genres rong (lan dau chay).
+ * Cu: GET /api/genres goi seedDefaultGenres() MOI lan — upsert 223 row
+ * cho moi request + khong the xoa genre vi seed lai ngay. */
+export async function seedDefaultGenresIfEmpty() {
+  const { count, error } = await supabase.from("genres").select("*", { count: "exact", head: true });
+  if (error) throw new Error(`seedDefaultGenresIfEmpty failed: ${error.message}`);
+  if ((count ?? 0) === 0) {
+    await seedDefaultGenres();
+    return true; // da seed lan dau
+  }
+  return false; // da co du lieu — khong re-seed
+}
+
+/** Xoa the loai — CHI cho phep khi khong manga nao dung. Tra ve inUse
+ * de route tra 409 kem so manga (canh bao ro rang cho UI). */
+export async function deleteGenreIfUnused(genreId: string): Promise<{ deleted: boolean; inUse: number }> {
+  const { data: genre, error: gErr } = await supabase
+    .from("genres")
+    .select("id, name")
+    .eq("id", genreId)
+    .maybeSingle();
+  if (gErr) throw new Error(`deleteGenre failed: ${gErr.message}`);
+  if (!genre) return { deleted: false, inUse: 0 };
+
+  const { count, error: cErr } = await supabase
+    .from("manga_genres")
+    .select("*", { count: "exact", head: true })
+    .eq("genre_id", genreId);
+  if (cErr) throw new Error(`deleteGenre count failed: ${cErr.message}`);
+  const inUse = count ?? 0;
+  if (inUse > 0) return { deleted: false, inUse };
+
+  const { error: dErr } = await supabase.from("genres").delete().eq("id", genreId);
+  if (dErr) throw new Error(`deleteGenre failed: ${dErr.message}`);
+  return { deleted: true, inUse: 0 };
 }
 
 export async function seedDefaultGenres() {
@@ -270,39 +313,47 @@ export async function ensureGenres(names: string[]): Promise<Map<string, string>
   );
   if (wanted.length === 0) return result;
 
-  const lowered = wanted.map((n) => n.toLowerCase());
-  const { data: existing } = await supabase
-    .from("genres")
-    .select("id, name")
-    .in("name", [...wanted, ...lowered]);
-
-  const byLower = new Map((existing ?? []).map((g: any) => [g.name.toLowerCase(), g]));
+  // FIX case-insensitive DAY DU: lay TAT CA ten genre (phan trang) va khop
+  // theo lower-case. Cu chi truy van .in("name", [name, name.toLowerCase()])
+  // nen "ACTION" khong khop "Action" trong DB -> insert "ACTION" nhu genre
+  // moi (unique case-sensitive) -> tao the loai TRUNG TEN chi khac hoa/thuong.
+  const allRows = await fetchAllRows<{ id: string; name: string }>(
+    (from, to) =>
+      supabase
+        .from("genres")
+        .select("id, name")
+        .order("name", { ascending: true })
+        .range(from, to),
+    "đọc genres để khớp tên"
+  );
+  const byLower = new Map(allRows.map((g) => [g.name.toLowerCase(), g]));
 
   for (const name of wanted) {
     const found = byLower.get(name.toLowerCase());
     if (found) {
       result.set(name, found.id);
-    } else {
-      const { data: created, error } = await supabase
+      continue;
+    }
+    // Chua co — insert (race thi doc lai bang ilike)
+    const { data: created, error } = await supabase
+      .from("genres")
+      .insert({ name })
+      .select("id, name")
+      .single();
+    if (error) {
+      // Race: another request created it (ke ca khac hoa/thuong) -> read again
+      const { data: retry } = await supabase
         .from("genres")
-        .insert({ name })
         .select("id, name")
-        .single();
-      if (error) {
-        // Race: another request created it -> read again
-        const { data: retry } = await supabase
-          .from("genres")
-          .select("id, name")
-          .ilike("name", name)
-          .maybeSingle();
-        if (retry) {
-          byLower.set(name.toLowerCase(), retry);
-          result.set(name, retry.id);
-        }
-      } else if (created) {
-        byLower.set(name.toLowerCase(), created);
-        result.set(name, created.id);
+        .ilike("name", name)
+        .maybeSingle();
+      if (retry) {
+        byLower.set(name.toLowerCase(), retry);
+        result.set(name, retry.id);
       }
+    } else if (created) {
+      byLower.set(name.toLowerCase(), created);
+      result.set(name, created.id);
     }
   }
   return result;
