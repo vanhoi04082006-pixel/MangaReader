@@ -55,6 +55,8 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   if (!input.keys || input.keys.length === 0) {
     throw new ApiError("Cần truyền danh sách keys để dọn dẹp.", 400, "missing_keys");
   }
-  const result = await cleanupOrphanKeys(input.keys, input.dryRun);
+  // maxAgeHours dung nhu "tuoi toi thieu" cua PENDING de bo qua
+  // (khong xoa upload dang dien ra trong mode keys).
+  const result = await cleanupOrphanKeys(input.keys, input.dryRun, input.maxAgeHours);
   return ok({ mode: "keys", dryRun: input.dryRun, ...result });
 }) as unknown as (req: NextRequest) => Promise<NextResponse>;

@@ -286,7 +286,11 @@ export function verifyLocalCredentials(email: string, password: string): Session
   const b = Buffer.from(env.admin.password, "utf8");
   const passOk = a.length === b.length && crypto.timingSafeEqual(a, b);
   if (!emailOk || !passOk) return null;
-  return { id: "local-admin", email: env.admin.email };
+  // Dung UUID admin that (neu cau hinh) de dam bao FK profiles/
+  // favorites/reading_progress/history hoat dong tren DB Postgres
+  // (id "local-admin" khong phai UUID se lam hong FK khi dev voi
+  // Supabase that). Production khong dung provider local.
+  return { id: env.admin.userId ?? "local-admin", email: env.admin.email };
 }
 
 export { SupabaseAuthError };

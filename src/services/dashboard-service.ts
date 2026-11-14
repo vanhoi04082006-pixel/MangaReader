@@ -6,22 +6,27 @@ import { supabase } from "@/lib/supabase";
 import { getEnv } from "@/lib/env";
 import { continueReading } from "@/services/progress-service";
 import { getMangaSummaries } from "@/services/manga-service";
+import { getStorageUsageCached } from "@/services/storage-service";
 import type { DashboardDto, RecentUploadItemDto } from "@/types";
 
 export async function getDashboard(userId: string): Promise<DashboardDto> {
   const env = getEnv();
 
-  const [mangaCount, chapterCount, pageCount, storageAgg, favoriteCount, genreCount] =
+  // FIX: dung luong phai la SUM(file_size) cua TOAN BO row CONFIRMED.
+  // Cu: 1 query khong phan trang → PostgREST chi tra 1000 row dau →
+  // dung luong bi thieu (312MB thay vi ~2.6GB). Nay: helper phan trang
+  // + cache 60s (dashboard/sidebar goi lien tuc).
+  const [usage, mangaCount, chapterCount, pageCount, favoriteCount, genreCount] =
     await Promise.all([
+      getStorageUsageCached(),
       supabase.from("mangas").select("*", { count: "exact", head: true }),
       supabase.from("chapters").select("*", { count: "exact", head: true }),
       supabase.from("pages").select("*", { count: "exact", head: true }),
-      supabase.from("storage_objects").select("file_size").eq("status", "CONFIRMED"),
       supabase.from("favorites").select("*", { count: "exact", head: true }).eq("user_id", userId),
       supabase.from("genres").select("*", { count: "exact", head: true }),
     ]);
 
-  const storageUsedBytes = (storageAgg.data ?? []).reduce((sum: number, r: any) => sum + Number(r.file_size ?? 0), 0);
+  const storageUsedBytes = usage.confirmedBytes;
 
   const [continueList, recentMangasRes, recentUploadsRaw] = await Promise.all([
     continueReading(userId, 8),

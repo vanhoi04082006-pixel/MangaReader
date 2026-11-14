@@ -1295,3 +1295,176 @@ describe("buildMangasFromFiles (cau truc thu muc)", () => {
     expect(new Set(mangas[0].chapters.map((c) => c.number)).size).toBe(1);
   });
 });
+
+// =============================================================
+// STORAGE AUDIT — chunking theo ngan sach URL + phan lop orphan
+// (fix bug chinh: audit 10.755 object bao toan bo la "mo coi" vi
+// query .in 1000 key lam URL ~108KB bi PostgREST tu choi)
+// =============================================================
+import {
+  chunkKeysForUrl,
+  classifyOrphans,
+  computeStorageUsage,
+  URL_BUDGET_CHARS,
+  type OrphanRowInfo,
+} from "../src/lib/storage-audit";
+
+/** Sinh object key giong that: mangas/{uuid}/chapters/{uuid}/p0001-ab12cd34.webp (~108 ky tu) */
+function fakeObjectKey(i: number): string {
+  const uuid = (seed: number) =>
+    `${(seed + 0x10000000).toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
+  return `mangas/${uuid(i)}/chapters/${uuid(i + 1)}/p${String(i % 10000).padStart(4, "0")}-v1m67j${String(i % 10)}q.webp`;
+}
+
+describe("chunkKeysForUrl — chunk theo ngan sach URL PostgREST", () => {
+  test("URL_BUDGET_CHARS nam duoi gioi han ~8KB cua PostgREST/Kong", () => {
+    expect(URL_BUDGET_CHARS).toBeLessThanOrEqual(8000);
+    expect(URL_BUDGET_CHARS).toBe(6000);
+  });
+
+  test("moi chunk khong vuoc ngan sach URL (tinh ca dau phay)", () => {
+    const keys = Array.from({ length: 10_755 }, (_, i) => fakeObjectKey(i));
+    const chunks = chunkKeysForUrl(keys);
+    expect(chunks.length).toBeGreaterThan(100); // 10.755 key ~108 ky tu => ~196 chunk
+    for (const chunk of chunks) {
+      const urlLen = chunk.reduce((s, k) => s + k.length + 1, 0); // key + dau phay
+      expect(urlLen).toBeLessThanOrEqual(URL_BUDNET_BUDGET());
+    }
+  });
+
+  test("giu nguyen toan bo key + thu tu sau khi chunk (flat == input)", () => {
+    const keys = Array.from({ length: 1000 }, (_, i) => fakeObjectKey(i + 7));
+    const flat = chunkKeysForUrl(keys).flat();
+    expect(flat).toEqual(keys);
+  });
+
+  test("key rong bi loai bo, khong lam voi index", () => {
+    const chunks = chunkKeysForUrl(["", "abc", "", "def"] as string[]);
+    expect(chunks.flat()).toEqual(["abc", "def"]);
+  });
+
+  test("ngan sach rat nho -> moi key mot chunk", () => {
+    const chunks = chunkKeysForUrl(["aaaa", "bbbb", "cccc"], 5);
+    expect(chunks).toEqual([["aaaa"], ["bbbb"], ["cccc"]]);
+  });
+
+  test("danh sach rong -> khong chunk", () => {
+    expect(chunkKeysForUrl([])).toEqual([]);
+  });
+});
+
+function URL_BUDNET_BUDGET(): number {
+  return URL_BUDGET_CHARS + 1; // dung sai 1 ky tu (phan tach cuoi khong co)
+}
+
+describe("classifyOrphans — phan lop file mo coi (0 false positive)", () => {
+  const NOW = Date.parse("2026-11-14T12:00:00Z");
+  const STALE_CUTOFF = NOW - 24 * 3600 * 1000;
+
+  /**
+   * QUAN TRONG NHAT: mo phong dung lieu that (10.755 object tren R2,
+   * tat ca deu duoc pages tham chieu) — audit PHAI tra 0 orphan.
+   * Day chinh la boi canh bug: query .in 1000 key that bai => data
+   * null => moi key bi coi la "mo coi" (10.755 file gia, 3.8GB).
+   */
+  test("10.755 key deu duoc tham chieu => 0 orphan (ky chuyen that)", () => {
+    const N = 10_755;
+    const keys = Array.from({ length: N }, (_, i) => fakeObjectKey(i));
+    const sizes = Array.from({ length: N }, () => 283_000);
+    const pageKeys = new Set(keys); // DB co day du tham chieu
+    const orphans = classifyOrphans(
+      keys,
+      sizes,
+      { pageKeys, coverKeys: new Set<string>(), rows: new Map() },
+      STALE_CUTOFF
+    );
+    expect(orphans).toHaveLength(0);
+  });
+
+  test("phan lop tung truong hop: tham chieu / khong row / PENDING tuoi-qua-han / CONFIRMED / DELETE_PENDING", () => {
+    const keys = [
+      "k-referenced-by-page",
+      "k-referenced-by-cover",
+      "k-no-row",
+      "k-pending-fresh",
+      "k-pending-stale",
+      "k-confirmed-unref",
+      "k-deletepending-unref",
+    ];
+    const sizes = [10, 20, 30, 40, 50, 60, 70];
+    const rows = new Map<string, OrphanRowInfo>([
+      ["k-pending-fresh", { status: "PENDING", createdAtMs: NOW - 1 * 3600 * 1000 }],
+      ["k-pending-stale", { status: "PENDING", createdAtMs: NOW - 48 * 3600 * 1000 }],
+      ["k-confirmed-unref", { status: "CONFIRMED", createdAtMs: NOW }],
+      ["k-deletepending-unref", { status: "DELETE_PENDING", createdAtMs: NOW }],
+    ]);
+    const orphans = classifyOrphans(
+      keys,
+      sizes,
+      {
+        pageKeys: new Set(["k-referenced-by-page"]),
+        coverKeys: new Set(["k-referenced-by-cover"]),
+        rows,
+      },
+      STALE_CUTOFF
+    );
+    // Chi 4 key la orphan thuc su; 2 key duoc tham chieu va 1 PENDING
+    // con tuoi KHONG phai orphan (upload dang dien ra)
+    expect(orphans.map((o) => o.objectKey)).toEqual([
+      "k-no-row",
+      "k-pending-stale",
+      "k-confirmed-unref",
+      "k-deletepending-unref",
+    ]);
+    expect(orphans.map((o) => o.size)).toEqual([30, 50, 60, 70]);
+  });
+
+  test("size thieu/khong khop index -> mac dinh 0, khong crash", () => {
+    const orphans = classifyOrphans(
+      ["k-no-row"],
+      [],
+      { pageKeys: new Set(), coverKeys: new Set(), rows: new Map() },
+      STALE_CUTOFF
+    );
+    expect(orphans).toEqual([{ objectKey: "k-no-row", size: 0 }]);
+  });
+});
+
+describe("computeStorageUsage — SUM dung luong phan loai theo status", () => {
+  test("tong hop CONFIRMED / PENDING (tuoi vs qua han) / DELETE_PENDING", () => {
+    const NOW = new Date("2026-11-14T12:00:00Z").toISOString();
+    const OLD = new Date("2026-11-01T12:00:00Z").toISOString();
+    const usage = computeStorageUsage(
+      [
+        { status: "CONFIRMED", file_size: 1000, manga_id: "m1", created_at: NOW },
+        { status: "CONFIRMED", file_size: 2000, manga_id: "m1", created_at: NOW },
+        { status: "PENDING", file_size: 500, manga_id: "m1", created_at: NOW }, // tuoi
+        { status: "PENDING", file_size: 700, manga_id: "m1", created_at: OLD }, // qua han
+        { status: "DELETE_PENDING", file_size: 900, manga_id: "m1", created_at: NOW },
+        { status: "GHOST", file_size: 999, manga_id: "m1", created_at: NOW }, // trang thai la
+      ],
+      Date.parse("2026-11-14T12:00:00Z") - 24 * 3600 * 1000
+    );
+    expect(usage.confirmedBytes).toBe(3000);
+    expect(usage.confirmedFiles).toBe(2);
+    expect(usage.pendingBytes).toBe(1200);
+    expect(usage.pendingFiles).toBe(2);
+    expect(usage.freshPendingBytes).toBe(500); // chi PENDING tuoi
+    expect(usage.freshPendingFiles).toBe(1);
+    expect(usage.deletePendingBytes).toBe(900);
+    expect(usage.deletePendingFiles).toBe(1);
+  });
+
+  test("file_size null/ky tu khong so -> coi la 0, khong NaN", () => {
+    const usage = computeStorageUsage(
+      [
+        { status: "CONFIRMED", file_size: null, manga_id: null, created_at: null },
+        { status: "CONFIRMED", file_size: "abc", manga_id: null, created_at: null },
+      ],
+      0
+    );
+    expect(usage.confirmedBytes).toBe(0);
+    expect(usage.confirmedFiles).toBe(2);
+    expect(Number.isFinite(usage.confirmedBytes)).toBe(true);
+  });
+});

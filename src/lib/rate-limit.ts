@@ -117,6 +117,8 @@ export const RATE_LIMITS = {
   uploadProxy: { limit: 600, windowMs: 10 * 60 * 1000 },
   abort: { limit: 60, windowMs: 10 * 60 * 1000 },
   cleanup: { limit: 10, windowMs: 60 * 60 * 1000 },
-  audit: { limit: 30, windowMs: 60 * 60 * 1000 },
+  // 1 lan audit = ~ceil(N/1000) request (10.7k object -> 11 request);
+  // 60/gio cho phep ~5 lan quet day du moi gio — van bao ve DB.
+  audit: { limit: 60, windowMs: 60 * 60 * 1000 },
   write: { limit: 300, windowMs: 10 * 60 * 1000 },
 } as const;
