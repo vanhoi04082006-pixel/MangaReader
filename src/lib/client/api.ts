@@ -5,11 +5,14 @@
 export class ApiClientError extends Error {
   status: number;
   code?: string;
-  constructor(message: string, status: number, code?: string) {
+  /** Retry-After (ms) — server tra kem 429, engine dung de cho doi dung luc. */
+  retryAfterMs?: number;
+  constructor(message: string, status: number, code?: string, retryAfterMs?: number) {
     super(message);
     this.name = "ApiClientError";
     this.status = status;
     this.code = code;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -43,7 +46,12 @@ async function rawFetch<T>(path: string, init?: FetchOptions): Promise<T> {
 
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
-    throw new ApiClientError(data.error ?? `Lỗi máy chủ (${res.status}).`, res.status, data.code);
+    // Giu lai Retry-After (giay) de lop tren (engine) cho doi dung luc khi 429
+    const retryAfterSec = Number(res.headers.get("retry-after"));
+    const retryAfterMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+      ? Math.round(retryAfterSec * 1000)
+      : undefined;
+    throw new ApiClientError(data.error ?? `Lỗi máy chủ (${res.status}).`, res.status, data.code, retryAfterMs);
   }
 
   if (res.status === 204) return undefined as T;

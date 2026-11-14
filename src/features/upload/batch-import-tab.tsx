@@ -42,7 +42,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { api, ApiClientError } from "@/lib/client/api";
 import { navigate } from "@/lib/client/hash-router";
-import { formatBytes, formatNumber } from "@/utils/format";
+import { formatBytes, formatNumber, formatSpeed, formatDuration } from "@/utils/format";
 import { STATUS_LABELS } from "@/components/manga/manga-card";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -54,7 +54,7 @@ import type {
   PageDto,
   Paginated,
 } from "@/types";
-import { UploadEngine, type PageItem } from "@/features/upload/upload-engine";
+import { UploadEngine, type PageItem, type UploadProgress } from "@/features/upload/upload-engine";
 import { uploadCoverToR2 } from "@/features/upload/cover-upload";
 import {
   assignChapterNumbers,
@@ -66,6 +66,11 @@ import {
 } from "@/features/upload/folder-parser";
 
 // ---------------- constants & helpers ----------------
+
+/** ETA — null khi chua do duoc toc do. */
+function formatEta(seconds: number | null): string {
+  return seconds == null ? "đang đo..." : formatDuration(seconds);
+}
 
 const MAX_FILE_BYTES = 100 * 1024 * 1024; // 100MB / ảnh (khớp schema)
 const MAX_CHAPTER_ATTEMPTS = 3; // số lần chạy engine cho 1 chương (lỗi thường)
@@ -467,6 +472,8 @@ export function BatchImportTab() {
   const [importing, setImporting] = useState(false);
   const [importStates, setImportStates] = useState<Record<string, MangaImportState>>({});
   const [finished, setFinished] = useState(false);
+  /** Progress chi tiết cua chuong dang upload (% toc do, ETA, mode direct/proxy). */
+  const [engineProgress, setEngineProgress] = useState<UploadProgress | null>(null);
 
   const cancelledRef = useRef(false);
   const engineRef = useRef<UploadEngine | null>(null);
@@ -573,7 +580,7 @@ export function BatchImportTab() {
     mangaId: string,
     chapterId: string,
     initialItems: PageItem[],
-    onProgress: (uploaded: number, total: number) => void,
+    onProgress: (p: UploadProgress) => void,
     onWaitNotice: (msg: string | null) => void
   ): Promise<PageItem[]> => {
     let items = initialItems;
@@ -591,7 +598,7 @@ export function BatchImportTab() {
           const it = items.find((x) => x.id === id);
           if (it) Object.assign(it, patch);
         },
-        onProgress: (p) => onProgress(p.uploaded, p.total),
+        onProgress,
         onItemError: (_id, status) => {
           if (status === 429) sawRateLimit = true;
         },
@@ -899,9 +906,11 @@ export function BatchImportTab() {
                   mangaId,
                   chapter.id,
                   items,
-                  (up, total) => {
+                  (p) => {
+                    setEngineProgress(p);
+                    const pct = Math.round((p.uploaded / Math.max(1, p.total)) * 100);
                     patchState(states, manga.id, {
-                      currentChapter: `Đang upload: ${ch.name} — ${up}/${total} trang`,
+                      currentChapter: `Đang upload: ${ch.name} — ${p.uploaded}/${p.total} trang (${pct}%)`,
                     });
                   },
                   setWaitNotice
@@ -1206,6 +1215,32 @@ export function BatchImportTab() {
                 </span>
               </div>
               <Progress value={(doneCount / mangas.length) * 100} className="h-2" />
+              {/* Chi tiết chương đang upload: % / bytes / tốc độ / ETA / mode */}
+              {importing && engineProgress && (
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <span className="font-mono tabular-nums">
+                      {engineProgress.uploaded}/{engineProgress.total} trang ·{" "}
+                      {formatBytes(engineProgress.bytesUploaded)}/{formatBytes(engineProgress.bytesTotal)}
+                    </span>
+                    <span>Tốc độ: {formatSpeed(engineProgress.speed)}</span>
+                    <span>Còn lại: {formatEta(engineProgress.etaSeconds)}</span>
+                    {engineProgress.failed > 0 && (
+                      <span className="text-destructive">{engineProgress.failed} lỗi</span>
+                    )}
+                  </div>
+                  {engineProgress.via === "proxy" && (
+                    <p className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        Upload đang đi <strong>qua máy chủ (proxy)</strong> — chậm và tốn băng thông vì R2 chặn
+                        upload trực tiếp từ trình duyệt (CORS). Thêm origin vào CORS bucket R2 (Cloudflare
+                        Dashboard → R2 → manga-storage → Settings → CORS) để chạy nhanh chế độ trực tiếp.
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

@@ -26,6 +26,7 @@ import {
   UploadCloud,
   X,
   XCircle,
+  Zap,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -1149,6 +1150,24 @@ export function SingleUploadTab({
                     <span className="text-destructive">{progress.failed} lỗi</span>
                   ) : null}
                 </div>
+              ) : null}
+              {/* Che do ket noi: truc tiep R2 (nhanh) hay qua proxy server (cham —
+                  canh bao cau hinh CORS cho bucket R2) */}
+              {progress?.via === "proxy" ? (
+                <p className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Đang upload <strong>qua máy chủ (proxy)</strong> — chậm và tốn băng thông server vì R2
+                    chặn upload trực tiếp (CORS). {progress.proxyCount > 0 ? `${progress.proxyCount} file đã qua proxy. ` : ""}
+                    Thêm origin của bạn vào CORS bucket R2 (Cloudflare Dashboard → R2 → manga-storage →
+                    Settings → CORS) để chuyển sang chế độ trực tiếp.
+                  </span>
+                </p>
+              ) : progress?.via === "direct" ? (
+                <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Zap className="h-3.5 w-3.5 text-emerald-500" />
+                  Upload trực tiếp lên Cloudflare R2 (nhanh).
+                </p>
               ) : null}
             </div>
           ) : null}
