@@ -55,11 +55,6 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageDraft, setPageDraft] = useState("1");
 
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scrollHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isScrollingRef = useRef(false);
-  // Người dùng chủ động thu gọn toolbar → chỉ mở lại khi bấm nút hình quyển sách.
-  const collapsedRef = useRef(false);
   const pageInputRef = useRef<HTMLInputElement>(null);
   const lastSavedRef = useRef<{ page: number; fraction: number } | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -68,82 +63,9 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
   const initialPage =
     Number.isFinite(queryPage) && queryPage > 0 ? queryPage : (payload?.progress?.pageNumber ?? 1);
 
-  // ---------- Toolbar auto-hide ----------
-  const armHideTimer = useCallback(() => {
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    if (collapsedRef.current) return;
-    if (settings.autoHideToolbar && !settingsOpen && !chapterListOpen) {
-      hideTimerRef.current = setTimeout(() => setToolbarVisible(false), 2600);
-    }
-  }, [settings.autoHideToolbar, settingsOpen, chapterListOpen]);
-
-  const showToolbar = useCallback(() => {
-    collapsedRef.current = false;
-    setToolbarVisible(true);
-    armHideTimer();
-  }, [armHideTimer]);
-
-  /** Thu gọn toolbar thành nút hình quyển sách (bấm nút đó để mở lại). */
-  const collapseToolbar = useCallback(() => {
-    collapsedRef.current = true;
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
-    isScrollingRef.current = false;
-    setToolbarVisible(false);
-  }, []);
-
-  useEffect(() => {
-    armHideTimer();
-    return () => {
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    };
-  }, [armHideTimer]);
-
-  useEffect(() => {
-    const onMove = () => {
-      if (collapsedRef.current) return;
-      if (isScrollingRef.current) return;
-      showToolbar();
-    };
-    const onDown = () => {
-      if (collapsedRef.current) return;
-      showToolbar();
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerdown", onDown);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerdown", onDown);
-    };
-  }, [showToolbar]);
-
-  // An toolbar khi doc/cuon (wheel/touchmove/scroll) — chi hien lai khi
-  // dung lai (o yen 1 cho) ~1.4s. Dung wheel/touchmove vi scroll event
-  // khong fire tin cay trong mot so truong hop (container fixed/fullscreen).
-  const onReadingActivity = useCallback(() => {
-    if (collapsedRef.current) return;
-    if (!settings.autoHideToolbar || settingsOpen || chapterListOpen) return;
-    isScrollingRef.current = true;
-    setToolbarVisible(false);
-    if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
-    scrollHideTimerRef.current = setTimeout(() => {
-      isScrollingRef.current = false;
-      setToolbarVisible(true);
-      armHideTimer();
-    }, 1400);
-  }, [settings.autoHideToolbar, settingsOpen, chapterListOpen, armHideTimer]);
-
-  useEffect(() => {
-    const container = document.querySelector(".h-full.w-full.overflow-y-auto");
-    const targets: EventTarget[] = [window];
-    if (container) targets.push(container);
-    const events = ["scroll", "wheel", "touchmove"];
-    targets.forEach((t) => events.forEach((ev) => t.addEventListener(ev, onReadingActivity, { passive: true })));
-    return () => {
-      targets.forEach((t) => events.forEach((ev) => t.removeEventListener(ev, onReadingActivity)));
-      if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
-    };
-  }, [onReadingActivity, payload]);
+  // ---------- Toolbar: hien/an bang tay (khong tu dong an/hien) ----------
+  const showToolbar = useCallback(() => setToolbarVisible(true), []);
+  const collapseToolbar = useCallback(() => setToolbarVisible(false), []);
 
   // Khi mo panel thi luon hien toolbar
   const isToolbarVisible = toolbarVisible || settingsOpen || chapterListOpen;
@@ -294,10 +216,6 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
     }
     jumpToPage(n);
   }, [pageDraft, currentPage, jumpToPage]);
-
-  const goPrevChapter = useCallback(() => {
-    if (payload?.prevChapter) goToChapter(payload.prevChapter.id);
-  }, [payload, goToChapter]);
 
   const goNextChapter = useCallback(() => {
     if (payload?.nextChapter) goToChapter(payload.nextChapter.id);
@@ -505,10 +423,10 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
                   variant="ghost"
                   size="icon"
                   className="h-9 w-9"
-                  onClick={goPrevChapter}
-                  disabled={!payload.prevChapter}
-                  aria-label="Chương trước"
-                  title="Chương trước"
+                  onClick={() => jumpToPage(currentPage - 1)}
+                  disabled={currentPage <= 1}
+                  aria-label="Trang trước"
+                  title="Trang trước"
                 >
                   <ChevronLeft className="h-4.5 w-4.5" />
                 </Button>
@@ -545,10 +463,10 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
                   variant="ghost"
                   size="icon"
                   className="h-9 w-9"
-                  onClick={goNextChapter}
-                  disabled={!payload.nextChapter}
-                  aria-label="Chương sau"
-                  title="Chương sau"
+                  onClick={() => jumpToPage(currentPage + 1)}
+                  disabled={currentPage >= (payload.pages.length || 1)}
+                  aria-label="Trang sau"
+                  title="Trang sau"
                 >
                   <ChevronRight className="h-4.5 w-4.5" />
                 </Button>

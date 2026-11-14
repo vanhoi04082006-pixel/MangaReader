@@ -101,17 +101,6 @@ export function SettingsView() {
             onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
           />
         </div>
-        <Separator className="my-4" />
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <Label>Ẩn thanh công cụ khi đọc</Label>
-            <p className="text-xs text-muted-foreground">Tự động ẩn toolbar trong Reader</p>
-          </div>
-          <Switch
-            checked={readerSettings.autoHideToolbar}
-            onCheckedChange={(v) => readerSettings.update({ autoHideToolbar: v })}
-          />
-        </div>
       </section>
 
       {/* He thong */}
