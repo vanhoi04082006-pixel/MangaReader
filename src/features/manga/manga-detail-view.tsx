@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { EmptyState, ErrorState } from "@/components/common/states";
+import { Pagination } from "@/components/common/pagination";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { CoverImage } from "@/components/manga/cover-image";
 import { STATUS_LABELS } from "@/components/manga/manga-card";
@@ -395,27 +396,11 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
             </ul>
 
             {chaptersData.totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 pt-4">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={chapterPage <= 1}
-                  onClick={() => setChapterPage((p) => p - 1)}
-                >
-                  Trước
-                </Button>
-                <span className="px-2 font-mono text-sm tabular-nums text-muted-foreground">
-                  {chapterPage} / {chaptersData.totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={chapterPage >= chaptersData.totalPages}
-                  onClick={() => setChapterPage((p) => p + 1)}
-                >
-                  Sau
-                </Button>
-              </div>
+              <Pagination
+                page={chapterPage}
+                totalPages={chaptersData.totalPages}
+                onChange={setChapterPage}
+              />
             )}
           </>
         ) : (

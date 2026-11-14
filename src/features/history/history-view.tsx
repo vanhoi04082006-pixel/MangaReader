@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, Play, Trash2 } from "lucide-react";
+import { BookOpen, Play, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/common/states";
+import { Pagination } from "@/components/common/pagination";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { CoverImage } from "@/components/manga/cover-image";
 import { useHistory, useDeleteHistory, toastMutationError } from "@/hooks/queries";
@@ -119,22 +120,7 @@ export function HistoryView() {
           </ul>
 
           {data.totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2 pt-2">
-              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="px-2 font-mono text-sm tabular-nums text-muted-foreground">
-                {page} / {data.totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= data.totalPages}
-                onClick={() => setPage(page + 1)}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
+            <Pagination page={page} totalPages={data.totalPages} onChange={setPage} />
           )}
         </>
       ) : null}

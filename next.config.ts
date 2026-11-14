@@ -3,7 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   // Cho phep dev server chap nhan cross-origin asset requests tu preview panel
-  allowedDevOrigins: ["*.space-z.ai", "*.z.ai"],
+  // + localhost/127.0.0.1 cho dev local (Next 16 chan mac dinh -> hydration
+  // bi tre vinh viec khi truy cap qua 127.0.0.1: font/HMR payload bi block)
+  allowedDevOrigins: ["*.space-z.ai", "*.z.ai", "127.0.0.1", "localhost"],
   reactStrictMode: false,
   // Baseline security headers cho TAT CA deploy path (Vercel + self-host).
   // frame-ancestors: chan clickjacking cua admin SPA (cac handler destructive
