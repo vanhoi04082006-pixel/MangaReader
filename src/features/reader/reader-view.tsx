@@ -53,10 +53,14 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [finished, setFinished] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageDraft, setPageDraft] = useState("1");
 
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-const scrollHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-const isScrollingRef = useRef(false);
+  const scrollHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isScrollingRef = useRef(false);
+  // Người dùng chủ động thu gọn toolbar → chỉ mở lại khi bấm nút hình quyển sách.
+  const collapsedRef = useRef(false);
+  const pageInputRef = useRef<HTMLInputElement>(null);
   const lastSavedRef = useRef<{ page: number; fraction: number } | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -67,15 +71,26 @@ const isScrollingRef = useRef(false);
   // ---------- Toolbar auto-hide ----------
   const armHideTimer = useCallback(() => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    if (collapsedRef.current) return;
     if (settings.autoHideToolbar && !settingsOpen && !chapterListOpen) {
       hideTimerRef.current = setTimeout(() => setToolbarVisible(false), 2600);
     }
   }, [settings.autoHideToolbar, settingsOpen, chapterListOpen]);
 
   const showToolbar = useCallback(() => {
+    collapsedRef.current = false;
     setToolbarVisible(true);
     armHideTimer();
   }, [armHideTimer]);
+
+  /** Thu gọn toolbar thành nút hình quyển sách (bấm nút đó để mở lại). */
+  const collapseToolbar = useCallback(() => {
+    collapsedRef.current = true;
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
+    isScrollingRef.current = false;
+    setToolbarVisible(false);
+  }, []);
 
   useEffect(() => {
     armHideTimer();
@@ -86,10 +101,14 @@ const isScrollingRef = useRef(false);
 
   useEffect(() => {
     const onMove = () => {
+      if (collapsedRef.current) return;
       if (isScrollingRef.current) return;
       showToolbar();
     };
-    const onDown = () => showToolbar();
+    const onDown = () => {
+      if (collapsedRef.current) return;
+      showToolbar();
+    };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerdown", onDown);
     return () => {
@@ -102,6 +121,7 @@ const isScrollingRef = useRef(false);
   // dung lai (o yen 1 cho) ~1.4s. Dung wheel/touchmove vi scroll event
   // khong fire tin cay trong mot so truong hop (container fixed/fullscreen).
   const onReadingActivity = useCallback(() => {
+    if (collapsedRef.current) return;
     if (!settings.autoHideToolbar || settingsOpen || chapterListOpen) return;
     isScrollingRef.current = true;
     setToolbarVisible(false);
@@ -233,6 +253,47 @@ const isScrollingRef = useRef(false);
     },
     [payload, onPageChange]
   );
+
+  /** Nhảy tới trang ở cả 2 chế độ đọc (paged + cuộn dọc). */
+  const jumpToPage = useCallback(
+    (page: number) => {
+      if (!payload) return;
+      const total = Math.max(1, payload.pages.length);
+      const target = Math.min(Math.max(1, Math.round(page)), total);
+      if (settings.mode === "paged") {
+        setCurrentPage(target);
+        onPageChange(target, (target - 1) / total);
+      } else {
+        const el = document.querySelector(`[data-page-anchor="${target}"]`);
+        if (el) (el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "start" });
+        else {
+          const container = document.querySelector(".scrollbar-thin.overflow-y-auto");
+          if (container) {
+            const ratio = (target - 1) / total;
+            (container as HTMLElement).scrollTop =
+              ratio * ((container as HTMLElement).scrollHeight - (container as HTMLElement).clientHeight);
+          }
+        }
+      }
+      setPageDraft(String(target));
+    },
+    [payload, settings.mode, onPageChange]
+  );
+
+  // Đồng bộ ô nhập trang với trang hiện tại (trừ khi người dùng đang gõ).
+  useEffect(() => {
+    if (document.activeElement === pageInputRef.current) return;
+    setPageDraft(String(Math.min(currentPage, Math.max(1, payload?.pages.length ?? 1))));
+  }, [currentPage, payload?.pages.length]);
+
+  const commitPageInput = useCallback(() => {
+    const n = Number.parseInt(pageDraft, 10);
+    if (!Number.isFinite(n)) {
+      setPageDraft(String(currentPage));
+      return;
+    }
+    jumpToPage(n);
+  }, [pageDraft, currentPage, jumpToPage]);
 
   const goPrevChapter = useCallback(() => {
     if (payload?.prevChapter) goToChapter(payload.prevChapter.id);
@@ -452,9 +513,33 @@ const isScrollingRef = useRef(false);
                   <ChevronLeft className="h-4.5 w-4.5" />
                 </Button>
 
-                <span className="min-w-14 text-center font-mono text-xs font-semibold tabular-nums text-muted-foreground">
-                  {settings.mode === "paged" ? `${currentPage}/${pageCount}` : `${Math.min(currentPage, pageCount)}/${pageCount}`}
-                </span>
+                <div className="flex items-center gap-1">
+                  <input
+                    ref={pageInputRef}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={pageDraft}
+                    onChange={(e) => setPageDraft(e.target.value.replace(/\D/g, ""))}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onBlur={commitPageInput}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.currentTarget.blur();
+                      } else if (e.key === "Escape") {
+                        setPageDraft(String(currentPage));
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    aria-label={`Trang hiện tại, tổng ${pageCount} trang`}
+                    title="Nhập số trang rồi Enter để chuyển"
+                    className="h-7 w-12 rounded-md border border-input bg-background/60 px-1 text-center font-mono text-xs font-semibold tabular-nums outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                  />
+                  <span className="font-mono text-xs font-semibold tabular-nums text-muted-foreground">
+                    / {pageCount}
+                  </span>
+                </div>
 
                 <Button
                   variant="ghost"
@@ -502,6 +587,17 @@ const isScrollingRef = useRef(false);
                 >
                   {isFullscreen ? <Minimize className="h-4.5 w-4.5" /> : <Maximize className="h-4.5 w-4.5" />}
                 </Button>
+
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9"
+                  onClick={collapseToolbar}
+                  aria-label="Thu gọn thanh công cụ"
+                  title="Thu gọn thanh công cụ"
+                >
+                  <BookOpen className="h-4.5 w-4.5" />
+                </Button>
               </div>
 
               {/* Thanh keo nhanh trang */}
@@ -512,25 +608,7 @@ const isScrollingRef = useRef(false);
                   min={1}
                   max={pageCount}
                   step={1}
-                  onValueChange={([v]) => {
-                    if (settings.mode === "paged") {
-                      setCurrentPage(v);
-                      onPageChange(v, (v - 1) / Math.max(1, pageCount));
-                    } else {
-                      // vertical: cuon den trang — dung anchor link don gian
-                      const el = document.querySelector(`[data-page-anchor="${v}"]`);
-                      if (el) (el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "start" });
-                      else {
-                        // fallback: cuon theo ty le
-                        const container = document.querySelector(".scrollbar-thin.overflow-y-auto");
-                        if (container) {
-                          const ratio = (v - 1) / Math.max(1, pageCount);
-                          (container as HTMLElement).scrollTop =
-                            ratio * ((container as HTMLElement).scrollHeight - (container as HTMLElement).clientHeight);
-                        }
-                      }
-                    }
-                  }}
+                  onValueChange={([v]) => jumpToPage(v)}
                   className="flex-1"
                 />
                 <span className="font-mono text-[10px] text-muted-foreground">{pageCount}</span>
@@ -540,16 +618,17 @@ const isScrollingRef = useRef(false);
         )}
       </AnimatePresence>
 
-      {/* Nut ve thu vien (goc duoi khi toolbar an) */}
+      {/* Nút hình quyển sách: mở lại toolbar khi đã thu gọn */}
       <AnimatePresence>
-        {!toolbarVisible && (
+        {!isToolbarVisible && (
           <motion.button
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="absolute bottom-[max(1rem,env(safe-area-inset-bottom,0px))] right-4 z-10 rounded-full border bg-background/80 p-2.5 text-muted-foreground shadow-lg backdrop-blur-md transition-colors hover:text-foreground"
-            onClick={exitReader}
-            aria-label="Thoát chế độ đọc"
+            onClick={showToolbar}
+            aria-label="Mở thanh công cụ"
+            title="Mở thanh công cụ"
           >
             <BookOpen className="h-5 w-5" />
           </motion.button>

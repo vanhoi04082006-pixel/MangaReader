@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LayoutGrid,
   List,
@@ -68,6 +68,11 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
   const sort = (route.query.get("sort") ?? "createdAt") as MangaFilters["sort"];
   const order = (route.query.get("order") ?? "desc") as "asc" | "desc";
   const page = queryInt(route.query, "page", 1);
+
+  const [pageDraft, setPageDraft] = useState(String(page));
+  useEffect(() => {
+    setPageDraft(String(page));
+  }, [page]);
 
   const setQuery = (patch: Record<string, string | null>) => {
     const base = favoritesOnly ? "/favorites" : "/library";
@@ -231,6 +236,17 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
           </SelectContent>
         </Select>
 
+        {activeFilterCount > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1 text-muted-foreground hover:text-foreground"
+            onClick={() => navigate(favoritesOnly ? "/favorites" : "/library")}
+          >
+            <X className="h-3.5 w-3.5" />
+            Xóa lọc
+          </Button>
+        )}
         <div className="ml-auto flex overflow-hidden rounded-lg border">
           <button
             className={cn(
@@ -332,9 +348,38 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
               >
                 Trước
               </Button>
-              <span className="px-2 font-mono text-sm tabular-nums text-muted-foreground">
-                {page} / {data.totalPages}
-              </span>
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={pageDraft}
+                  onChange={(e) => setPageDraft(e.target.value.replace(/\D/g, ""))}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  onBlur={() => {
+                    const n = Number.parseInt(pageDraft, 10);
+                    if (!Number.isFinite(n) || n < 1) {
+                      setPageDraft(String(page));
+                      return;
+                    }
+                    const clamped = Math.min(n, data.totalPages);
+                    setPageDraft(String(clamped));
+                    if (clamped !== page) setQuery({ page: String(clamped) });
+                  }}
+                  aria-label={`Trang hiện tại, tổng ${data.totalPages} trang`}
+                  title="Nhập số trang rồi Enter để chuyển"
+                  className="h-8 w-12 rounded-md border border-input bg-background px-1 text-center font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                />
+                <span className="font-mono text-sm text-muted-foreground">
+                  / {data.totalPages}
+                </span>
+              </div>
               <Button
                 variant="outline"
                 size="sm"
