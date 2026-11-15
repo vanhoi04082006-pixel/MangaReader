@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
+import { BackButton } from "@/components/common/back-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuthStore } from "@/store/auth-store";
 import { useReaderStore } from "@/store/reader-store";
@@ -178,9 +179,12 @@ export function SettingsView() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Cài đặt</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">Tài khoản, giao diện và thông tin hệ thống</p>
+      <div className="flex items-start gap-1">
+        <BackButton fallback="/library" />
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">Cài đặt</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">Tài khoản, giao diện và thông tin hệ thống</p>
+        </div>
       </div>
 
       {/* Tai khoan */}

@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { EmptyState, ErrorState } from "@/components/common/states";
+import { BackButton } from "@/components/common/back-button";
 import { Pagination } from "@/components/common/pagination";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { CoverImage } from "@/components/manga/cover-image";
@@ -113,6 +114,9 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
 
   return (
     <div className="space-y-8">
+      {/* Quay lai */}
+      <BackButton fallback="/library" />
+
       {/* Khu vuc dau: bia + thong tin */}
       <div className="relative">
         {/* Background blur tu bia */}
