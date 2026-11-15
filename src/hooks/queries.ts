@@ -57,6 +57,8 @@ export function useDashboard() {
 export interface MangaFilters {
   search?: string;
   genre?: string;
+  /** Nhieu the loai (AND) — uu tien hon `genre` neu ca hai duoc dat. */
+  genres?: string[];
   status?: MangaStatus | "";
   sort?: "title" | "createdAt" | "updatedAt" | "lastRead";
   order?: "asc" | "desc";
@@ -69,6 +71,7 @@ export function mangaFiltersToQuery(filters: MangaFilters): string {
   const params = new URLSearchParams();
   if (filters.search) params.set("search", filters.search);
   if (filters.genre) params.set("genre", filters.genre);
+  if (filters.genres?.length) params.set("genres", filters.genres.join(","));
   if (filters.status) params.set("status", filters.status);
   if (filters.sort) params.set("sort", filters.sort);
   if (filters.order) params.set("order", filters.order);

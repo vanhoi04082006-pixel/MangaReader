@@ -58,6 +58,8 @@ interface ListParams {
   userId: string;
   search?: string;
   genre?: string;
+  /** Nhieu the loai cung luc — manga phai co TAT CA cac the loai trong danh sach (AND). */
+  genres?: string[];
   status?: MangaStatus;
   sort: "title" | "createdAt" | "updatedAt" | "lastRead";
   order: "asc" | "desc";
@@ -144,16 +146,34 @@ export async function listMangas(params: ListParams): Promise<Paginated<MangaSum
     }
   }
 
-  // Genre filter ids
+  // Genre filter ids — 1 the loai: truy cap truc tiep; nhieu the loai: AND
+  // (manga phai thuoc tat ca cac the loai da chon).
+  const wantedGenres = params.genres?.length ? params.genres : params.genre ? [params.genre] : [];
   let genreIds: string[] | null = null;
-  if (params.genre) {
-    const { data: genre } = await supabase.from("genres").select("id").eq("name", params.genre).maybeSingle();
-    if (genre) {
-      const { data: mg } = await supabase.from("manga_genres").select("manga_id").eq("genre_id", genre.id);
+  if (wantedGenres.length > 0) {
+    const { data: gRows } = await supabase.from("genres").select("id").in("name", wantedGenres);
+    const gIds = (gRows ?? []).map((g: any) => g.id);
+    if (gIds.length === 0) {
+      return { items: [], total: 0, page: params.page, pageSize: params.pageSize, totalPages: 1 };
+    }
+    const { data: mg } = await supabase
+      .from("manga_genres")
+      .select("manga_id, genre_id")
+      .in("genre_id", gIds);
+    if (gIds.length === 1) {
       genreIds = (mg ?? []).map((m: any) => m.manga_id);
-      if (genreIds.length === 0) {
-        return { items: [], total: 0, page: params.page, pageSize: params.pageSize, totalPages: 1 };
+    } else {
+      // Dem so the loai khac nhau moi manga co — du gIds.length nghia la du tat ca
+      const perManga = new Map<string, Set<string>>();
+      for (const row of mg ?? []) {
+        let set = perManga.get(row.manga_id);
+        if (!set) perManga.set(row.manga_id, (set = new Set()));
+        set.add(row.genre_id);
       }
+      genreIds = [...perManga.entries()].filter(([, set]) => set.size >= gIds.length).map(([id]) => id);
+    }
+    if (genreIds.length === 0) {
+      return { items: [], total: 0, page: params.page, pageSize: params.pageSize, totalPages: 1 };
     }
   }
 
