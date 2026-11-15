@@ -16,6 +16,9 @@ export const GET = withErrorHandling(async (req: NextRequest) => {
     userId: user.id,
     search: query.search,
     genre: query.genre,
+    genres: query.genres
+      ? query.genres.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 12)
+      : undefined,
     status: query.status,
     sort: query.sort,
     order: query.order,

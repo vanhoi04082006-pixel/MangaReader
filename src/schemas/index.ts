@@ -145,6 +145,8 @@ export const genreCreateSchema = z.object({
 export const mangaListQuerySchema = z.object({
   search: z.string().trim().max(200).optional(),
   genre: z.string().trim().max(60).optional(),
+  // Nhieu the loai cung luc, phan tach bang dau phay (VD: genres=Harem,Fantasy)
+  genres: z.string().trim().max(800).optional(),
   status: z.enum(MANGA_STATUSES).optional(),
   sort: z.enum(["title", "createdAt", "updatedAt", "lastRead"]).default("createdAt"),
   order: z.enum(["asc", "desc"]).default("desc"),

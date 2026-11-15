@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Check,
   LayoutGrid,
@@ -8,6 +8,7 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
+  Tags,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, ErrorState } from "@/components/common/states";
 import { Pagination } from "@/components/common/pagination";
 import { MangaGrid, MangaListRow } from "@/components/manga/manga-card";
@@ -72,6 +74,7 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
 export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const route = useHashRoute();
   const [view, setView] = useState<"grid" | "list">("grid");
+  const [tab, setTab] = useState<"manga" | "genres">("manga");
   const [genreFilterOpen, setGenreFilterOpen] = useState(false);
 
   const routeSearch = route.query.get("search") ?? "";
@@ -85,7 +88,15 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
   }
 
   const search = routeSearch;
-  const genre = route.query.get("genre") ?? "";
+  // The loai da chon: doc `genres` (nhieu, phan tach dau phay) + `genre` (cu, 1
+  // the loai — giu tuong thich link deeplink cu).
+  const genresParam = route.query.get("genres") ?? "";
+  const legacyGenreParam = route.query.get("genre");
+  const selectedGenres = useMemo(() => {
+    const list = genresParam.split(",").map((s) => s.trim()).filter(Boolean);
+    if (legacyGenreParam && !list.includes(legacyGenreParam)) list.push(legacyGenreParam);
+    return list;
+  }, [genresParam, legacyGenreParam]);
   const status = (route.query.get("status") ?? "") as MangaStatus | "";
   const sort = (route.query.get("sort") ?? "createdAt") as MangaFilters["sort"];
   const order = (route.query.get("order") ?? "desc") as "asc" | "desc";
@@ -96,10 +107,14 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
     navigate(`${base}${updateRouteQuery(route.query, patch)}`, { replace: true });
   };
 
+  const setGenres = (next: string[]) => {
+    setQuery({ genres: next.length ? next.join(",") : null, genre: null, page: null });
+  };
+
   // Desktop hiển thị 21 truyện/trang (7 cột x 3 hàng đều nhau)
   const filters: MangaFilters = {
     search: search || undefined,
-    genre: genre || undefined,
+    genres: selectedGenres.length ? selectedGenres : undefined,
     status: status || undefined,
     sort,
     order,
@@ -110,7 +125,7 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
 
   const { data, isLoading, isError, error, refetch } = useMangas(filters);
   const { data: genresData } = useGenres();
-  const activeFilterCount = (search ? 1 : 0) + (genre ? 1 : 0) + (status ? 1 : 0);
+  const activeFilterCount = (search ? 1 : 0) + selectedGenres.length + (status ? 1 : 0);
 
   const onSearchSubmit = (value: string) => {
     setQuery({ search: value.trim() || null, page: null });
@@ -181,13 +196,19 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
               size="sm"
               className={cn(
                 "h-9 gap-2",
-                genre && "border-primary/50 text-primary",
+                selectedGenres.length > 0 && "border-primary/50 text-primary",
                 !favoritesOnly && "sm:min-w-32"
               )}
             >
               <SlidersHorizontal className="h-4 w-4" />
-              <span className="max-w-20 truncate sm:max-w-none">{genre || "Thể loại"}</span>
-              {activeFilterCount > 0 && !genre && (
+              <span className="max-w-20 truncate sm:max-w-none">
+                {selectedGenres.length === 1
+                  ? selectedGenres[0]
+                  : selectedGenres.length > 1
+                    ? `${selectedGenres[0]} +${selectedGenres.length - 1}`
+                    : "Thể loại"}
+              </span>
+              {activeFilterCount > 0 && selectedGenres.length === 0 && (
                 <span className="rounded-full bg-primary px-1.5 text-[10px] font-bold text-primary-foreground">
                   {activeFilterCount}
                 </span>
@@ -199,37 +220,46 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
               <button
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-accent",
-                  !genre && "font-medium text-primary"
+                  selectedGenres.length === 0 && "font-medium text-primary"
                 )}
-                onClick={() => setQuery({ genre: null, page: null })}
+                onClick={() => setGenres([])}
               >
                 Tất cả thể loại
               </button>
-              {(genresData?.genres ?? []).map((g) => (
-                <button
-                  key={g.id}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-accent",
-                    genre === g.name && "font-medium text-primary"
-                  )}
-                  onClick={() => setQuery({ genre: g.name === genre ? null : g.name, page: null })}
-                >
-                  {/* KHONG dung <Checkbox/> o day: Radix Checkbox render thanh
-                      <button> con trong <button> -> hydration error. Dung
-                      indicator thuan (single-select semantics). */}
-                  <span
-                    aria-hidden
+              {(genresData?.genres ?? []).map((g) => {
+                const active = selectedGenres.includes(g.name);
+                return (
+                  <button
+                    key={g.id}
                     className={cn(
-                      "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                      genre === g.name ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40"
+                      "flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-accent",
+                      active && "font-medium text-primary"
                     )}
+                    onClick={() =>
+                      setGenres(
+                        active
+                          ? selectedGenres.filter((x) => x !== g.name)
+                          : [...selectedGenres, g.name]
+                      )
+                    }
                   >
-                    {genre === g.name && <Check className="h-3 w-3" />}
-                  </span>
-                  <span className="flex-1 truncate text-left">{g.name}</span>
-                  <span className="text-xs text-muted-foreground">{g.mangaCount}</span>
-                </button>
-              ))}
+                    {/* KHONG dung <Checkbox/> o day: Radix Checkbox render thanh
+                        <button> con trong <button> -> hydration error. Dung
+                        indicator thuan (multi-select toggle). */}
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                        active ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40"
+                      )}
+                    >
+                      {active && <Check className="h-3 w-3" />}
+                    </span>
+                    <span className="flex-1 truncate text-left">{g.name}</span>
+                    <span className="text-xs text-muted-foreground">{g.mangaCount}</span>
+                  </button>
+                );
+              })}
             </div>
           </PopoverContent>
         </Popover>
@@ -309,6 +339,21 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
         </div>
       </div>
 
+      {/* Tab chinh: Truyện / Thể loại */}
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "manga" | "genres")}>
+        <TabsList>
+          <TabsTrigger value="manga" className="gap-1.5">
+            <LayoutGrid className="h-4 w-4" />
+            Truyện
+          </TabsTrigger>
+          <TabsTrigger value="genres" className="gap-1.5">
+            <Tags className="h-4 w-4" />
+            Thể loại{selectedGenres.length > 0 ? ` (${selectedGenres.length})` : ""}
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Tab TRUYEN — danh sach hien tai */}
+        <TabsContent value="manga" className="mt-4 space-y-5">
       {/* Chip bo loc dang ap dung — hien ro "Dang loc: Harem (21)" de khong
           lam nguoi dung hieu nham "chi con 21 truyen" khi thu vien co 96 */}
       {activeFilterCount > 0 && (
@@ -319,12 +364,13 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
               onRemove={() => setQuery({ search: null, page: null })}
             />
           ) : null}
-          {genre ? (
+          {selectedGenres.map((g) => (
             <FilterChip
-              label={`Đang lọc: ${genre} (${data ? data.total.toLocaleString("vi-VN") : "…"} truyện)`}
-              onRemove={() => setQuery({ genre: null, page: null })}
+              key={g}
+              label={`Thể loại: ${g}`}
+              onRemove={() => setGenres(selectedGenres.filter((x) => x !== g))}
             />
-          ) : null}
+          ))}
           {status ? (
             <FilterChip
               label={`Trạng thái: ${statusLabel(status)}`}
@@ -421,6 +467,115 @@ export function LibraryView({ favoritesOnly = false }: { favoritesOnly?: boolean
           )}
         </>
       ) : null}
+      </TabsContent>
+
+      {/* Tab THE LOAI — tim kiem + chon nhieu the loai */}
+      <TabsContent value="genres" className="mt-4">
+        <GenrePicker
+          genres={genresData?.genres ?? []}
+          selected={selectedGenres}
+          onApply={(next) => {
+            setGenres(next);
+            setTab("manga");
+          }}
+        />
+      </TabsContent>
+    </Tabs>
+    </div>
+  );
+}
+
+/** Tab the loai: o tim kiem + chip the loai chon nhieu, nut ap dung bo loc. */
+function GenrePicker({
+  genres,
+  selected,
+  onApply,
+}: {
+  genres: Array<{ id: string; name: string; mangaCount: number }>;
+  selected: string[];
+  onApply: (next: string[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [draft, setDraft] = useState<string[]>(selected);
+  useEffect(() => {
+    setDraft(selected);
+  }, [selected.join(",")]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q ? genres.filter((g) => g.name.toLowerCase().includes(q)) : genres;
+
+  const toggle = (name: string) => {
+    setDraft((d) => (d.includes(name) ? d.filter((x) => x !== name) : [...d, name]));
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1 sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Tìm thể loại..."
+            className="h-9 pl-9 pr-8"
+            aria-label="Tìm thể loại"
+          />
+          {query ? (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Xóa"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+        <span className="text-sm text-muted-foreground">
+          Đã chọn <span className="font-semibold text-foreground">{draft.length}</span> thể loại
+        </span>
+        <div className="ml-auto flex gap-2">
+          {draft.length > 0 && (
+            <Button variant="outline" size="sm" onClick={() => setDraft([])}>
+              Bỏ chọn
+            </Button>
+          )}
+          <Button size="sm" onClick={() => onApply(draft)}>
+            Lọc truyện
+          </Button>
+        </div>
+      </div>
+
+      <div className="scrollbar-thin max-h-[26rem] overflow-y-auto rounded-xl border bg-card p-3">
+        <div className="flex flex-wrap gap-1.5">
+          {filtered.map((g) => {
+            const active = draft.includes(g.name);
+            return (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => toggle(g.name)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-sm transition-colors",
+                  active
+                    ? "border-primary bg-primary/15 font-medium text-primary"
+                    : "bg-background text-foreground/80 hover:border-primary/40 hover:text-foreground"
+                )}
+                aria-pressed={active}
+              >
+                {active && <Check className="h-3.5 w-3.5" />}
+                {g.name}
+                <span className="font-mono text-[10px] text-muted-foreground">{g.mangaCount}</span>
+              </button>
+            );
+          })}
+        </div>
+        {filtered.length === 0 && (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            Không có thể loại nào khớp "{query}".
+          </p>
+        )}
+      </div>
     </div>
   );
 }

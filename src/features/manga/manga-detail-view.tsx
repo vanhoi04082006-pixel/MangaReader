@@ -166,8 +166,15 @@ export function MangaDetailView({ mangaId }: { mangaId: string }) {
                 {STATUS_LABELS[manga.status]}
               </Badge>
               {manga.genres.map((g) => (
-                <Badge key={g} variant="secondary" className="font-normal">
-                  {g}
+                <Badge key={g} variant="secondary" asChild className="font-normal">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/library?genres=${encodeURIComponent(g)}`)}
+                    title={`Xem truyện thể loại ${g}`}
+                    className="transition-colors hover:bg-primary/15 hover:text-primary"
+                  >
+                    {g}
+                  </button>
                 </Badge>
               ))}
             </div>
