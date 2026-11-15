@@ -3,9 +3,10 @@
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { goBack, navigate } from "@/lib/client/hash-router";
+import { cn } from "@/lib/utils";
 
 /**
- * Nút quay lại dùng chung cho các màn hình chi tiết/cài đặt.
+ * Nút "Quay lại" dạng pill có nhãn rõ ràng cho các màn hình chi tiết/cài đặt.
  * Về màn hình trước nếu có lịch sử trong app, ngược lại về `fallback`.
  */
 export function BackButton({
@@ -17,11 +18,12 @@ export function BackButton({
 }) {
   return (
     <Button
-      variant="ghost"
-      size="icon"
-      className={
-        className ?? "h-10 w-10 shrink-0 rounded-full sm:h-9 sm:w-9"
-      }
+      variant="outline"
+      size="sm"
+      className={cn(
+        "group h-9 gap-1.5 rounded-full bg-background/60 pl-2.5 pr-3.5 text-sm font-medium shadow-sm backdrop-blur-sm transition-all hover:border-primary/45 hover:bg-accent active:scale-[0.97]",
+        className
+      )}
       onClick={() => {
         // Lịch sử trong app (hash push) → quay lại; vào thẳng URL → về fallback
         if (window.history.length > 1) goBack();
@@ -30,7 +32,8 @@ export function BackButton({
       aria-label="Quay lại"
       title="Quay lại"
     >
-      <ArrowLeft className="h-5 w-5" />
+      <ArrowLeft className="h-4 w-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
+      Quay lại
     </Button>
   );
 }

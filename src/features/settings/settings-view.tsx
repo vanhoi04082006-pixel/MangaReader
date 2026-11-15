@@ -179,12 +179,10 @@ export function SettingsView() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <div className="flex items-start gap-1">
-        <BackButton fallback="/library" />
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">Cài đặt</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">Tài khoản, giao diện và thông tin hệ thống</p>
-        </div>
+      <BackButton fallback="/library" />
+      <div>
+        <h1 className="text-2xl font-extrabold tracking-tight">Cài đặt</h1>
+        <p className="mt-0.5 text-sm text-muted-foreground">Tài khoản, giao diện và thông tin hệ thống</p>
       </div>
 
       {/* Tai khoan */}
