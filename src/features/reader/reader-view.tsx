@@ -51,7 +51,7 @@ export function ReaderView({ mangaId, chapterId }: ReaderViewProps) {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chapterListOpen, setChapterListOpen] = useState(false);
-  const [toolbarVisible, setToolbarVisible] = useState(true);
+  const [toolbarVisible, setToolbarVisible] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [finished, setFinished] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);

@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { EmptyState, ErrorState } from "@/components/common/states";
+import { BackButton } from "@/components/common/back-button";
 import { StatCard, QuotaBar } from "@/components/common/stat-card";
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { useStorageStats, toastMutationError } from "@/hooks/queries";
@@ -191,11 +192,14 @@ export function StorageView() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Quản lý lưu trữ</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Thống kê dung lượng Cloudflare R2 và dọn dẹp file không còn sử dụng
-        </p>
+      <div className="flex items-start gap-1">
+        <BackButton fallback="/library" />
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">Quản lý lưu trữ</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Thống kê dung lượng Cloudflare R2 và dọn dẹp file không còn sử dụng
+          </p>
+        </div>
       </div>
 
       {isError ? (
